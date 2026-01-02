@@ -1,6 +1,6 @@
 {
-  "name": "八中重开模拟器",
-  "private": true,
+  "name": "bz-remake",
+  "private": false,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
