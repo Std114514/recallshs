@@ -12,22 +12,25 @@ const modifySub = (s: GameState, keys: SubjectKey[], val: number) => {
 // --- Configs ---
 
 export const CHANGELOG_DATA = [
-    { version: 'v1.0.0', date: '2026-1-2', content: ['八中重开模拟器正式发布'] }
+    { version: 'v1.1.2', date: '2025-03-10', content: ['修复了【争吵】事件文案显示错误的问题'] },
+    { version: 'v1.1.1', date: '2025-03-10', content: ['优化普通难度体验，更容易考入实验班', '增加负债系统与催债事件', '增加约会多样性与情感危机事件', '优化考试结算交互', '事件结束后自动继续游戏'] },
+    { version: 'v1.1.0', date: '2025-03-09', content: ['新增难度选择系统', '现实难度增加初始Debuff机制', '成就系统仅在【现实】难度开放'] },
+    { version: 'v1.0.0', date: '2025-03-08', content: ['八中重开模拟器正式发布'] }
 ];
 
 export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: string, desc: string, stats: GeneralStats, color: string }> = {
     'NORMAL': {
         label: '普通',
-        desc: '体验相对轻松的高中生活。',
+        desc: '体验相对轻松的高中生活。(属性大幅提升，更易获得高分)',
         color: 'bg-emerald-500',
         stats: {
-            mindset: 60,
-            experience: 20,
-            luck: 60,
-            romance: 30,
-            health: 90,
-            money: 100,
-            efficiency: 15
+            mindset: 80, // Buffed
+            experience: 40,
+            luck: 70,
+            romance: 40,
+            health: 100,
+            money: 150,
+            efficiency: 25 // Buffed significantly
         }
     },
     'HARD': {
@@ -65,10 +68,11 @@ export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: 
 export const ACHIEVEMENTS: Record<string, Achievement> = {
     'first_blood': { id: 'first_blood', title: '初入八中', description: '成功开始你的高中生活。', icon: 'fa-school', rarity: 'common' },
     'nerd': { id: 'nerd', title: '卷王', description: '单科成绩达到满分。', icon: 'fa-book-reader', rarity: 'rare' },
-    'romance_master': { id: 'romance_master', title: '海王', description: '虽然这在高中是不被允许的...', icon: 'fa-heart', rarity: 'legendary' },
+    'romance_master': { id: 'romance_master', title: '海王', description: '魅力值达到95以上。', icon: 'fa-heart', rarity: 'legendary' },
     'oi_god': { id: 'oi_god', title: '???', description: '获得五大竞赛省一。', icon: 'fa-code', rarity: 'legendary' },
     'survival': { id: 'survival', title: '极限生存', description: '在健康低于10的情况下完成一个学期。', icon: 'fa-notes-medical', rarity: 'rare' },
     'rich': { id: 'rich', title: '小金库', description: '持有金钱超过200。', icon: 'fa-coins', rarity: 'common' },
+    'in_debt': { id: 'in_debt', title: '负债累累', description: '负债超过100。', icon: 'fa-file-invoice-dollar', rarity: 'common' },
     'top_rank': { id: 'top_rank', title: '一览众山小', description: '在大型考试中获得年级第一。', icon: 'fa-crown', rarity: 'legendary' },
     'bottom_rank': { id: 'bottom_rank', title: '旷世奇才', description: '在大型考试中获得年级倒数第一。', icon: 'fa-poop', rarity: 'rare' },
 };
@@ -123,6 +127,33 @@ export const generateStudyEvent = (state: GameState): GameEvent => {
 };
 
 export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
+    // --- Dynamic Date Event (If Partner Exists) ---
+    if (state.romancePartner && Math.random() < 0.25) { // 25% chance if partner exists
+        const dateLocations = ['西单', '北海公园', '电影院', '国家图书馆', '什刹海'];
+        const loc = dateLocations[Math.floor(Math.random() * dateLocations.length)];
+        return {
+            id: `evt_date_${Date.now()}`,
+            title: '甜蜜约会',
+            description: `周末到了，${state.romancePartner}约你去${loc}逛逛。`,
+            type: 'positive',
+            choices: [
+                { 
+                    text: '欣然前往 (-30金钱)', 
+                    action: (st) => ({ 
+                        general: { ...st.general, money: st.general.money - 30, romance: st.general.romance + 5, mindset: st.general.mindset + 10 },
+                        activeStatuses: [...st.activeStatuses, { ...STATUSES['in_love'], duration: 2 }]
+                    }) 
+                },
+                { 
+                    text: '我要学习', 
+                    action: (st) => ({ 
+                        general: { ...st.general, mindset: st.general.mindset - 5, romance: st.general.romance - 5 } 
+                    }) 
+                }
+            ]
+        };
+    }
+
     const events: ((s: GameState) => GameEvent)[] = [
         (s) => ({
             id: 'evt_rain',
@@ -151,7 +182,6 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
                 { text: '抄作业', action: (st) => ({ general: { ...st.general, experience: st.general.experience + 5, luck: st.general.luck - 5 } }) } // Luck penalty
             ]
         }),
-        // Lower probability of lost card by diluting pool with new events
         (s) => ({
             id: 'evt_lost_card',
             title: '饭卡去哪了',
@@ -179,7 +209,6 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
                 { text: '太冷了，回班', action: (st) => ({ general: { ...st.general, health: st.general.health - 2 } }) }
             ]
         }),
-        // New Event: Break Time
         (s) => ({
             id: 'evt_break_time',
             title: '难得的休息',
@@ -207,7 +236,6 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
                 }
             ]
         }),
-        // New Event: Dinner
         (s) => ({
             id: 'evt_dinner',
             title: '周末聚餐',
@@ -319,6 +347,29 @@ export const BASE_EVENTS: Record<string, GameEvent> = {
             general: { ...s.general, mindset: s.general.mindset - 5, health: s.general.health - 5 } 
         }) 
     }]
+  },
+  'debt_collection': {
+      id: 'debt_collection',
+      title: '催债上门',
+      description: '“那个...上次借你的钱能不能还我？” 你的朋友看起来很为难，但你的钱包比脸还干净。',
+      type: 'negative',
+      choices: [
+          { 
+              text: '厚着脸皮拖延', 
+              action: (s) => ({ 
+                  general: { ...s.general, mindset: s.general.mindset - 10, romance: s.general.romance - 5 },
+                  log: [...s.log, { message: "你失去了朋友的信任。", type: 'error', timestamp: Date.now() }]
+              }) 
+          },
+          { 
+              text: '找家里要钱填坑', 
+              action: (s) => ({ 
+                  general: { ...s.general, money: s.general.money + 200, mindset: s.general.mindset - 20 },
+                  activeStatuses: [...s.activeStatuses, { ...STATUSES['anxious'], duration: 3 }],
+                  log: [...s.log, { message: "被家里狠狠骂了一顿，但债务解决了。", type: 'warning', timestamp: Date.now() }]
+              }) 
+          }
+      ]
   },
   'exam_fail_talk': {
       id: 'exam_fail_talk',
@@ -530,7 +581,7 @@ export const PHASE_EVENTS: Record<string, GameEvent[]> = {
             { text: '再等等...', action: (s) => ({ general: { ...s.general, mindset: s.general.mindset - 2 } }) }
         ]
     },
-    // First Date
+    // First Date (Strictly once)
     {
         id: 'evt_first_date',
         title: '初次约会',
@@ -557,6 +608,53 @@ export const PHASE_EVENTS: Record<string, GameEvent[]> = {
                         };
                     }
                 }
+            }
+        ]
+    },
+    // Conflict Event (Low Chance)
+    {
+        id: 'evt_fight',
+        title: '争吵',
+        // FIX: Use a function for dynamic description
+        description: (s: GameState) => `你和${s.romancePartner || '父母'}发生了一些不愉快，气氛降到了冰点。`,
+        condition: (s) => !!s.romancePartner || Math.random() < 0.3,
+        triggerType: 'RANDOM',
+        type: 'negative',
+        choices: [
+            { 
+                text: '主动道歉', 
+                action: (s) => ({ 
+                    general: { ...s.general, mindset: s.general.mindset - 5, romance: s.general.romance + 2 },
+                    log: [...s.log, { message: "退一步海阔天空。", type: 'info', timestamp: Date.now() }]
+                }) 
+            },
+            { 
+                text: '冷战', 
+                action: (s) => ({ 
+                    general: { ...s.general, mindset: s.general.mindset - 10, romance: s.general.romance - 5 },
+                    activeStatuses: [...s.activeStatuses, { ...STATUSES['anxious'], duration: 2 }] 
+                }) 
+            }
+        ]
+    },
+     // Betrayal Event (Rare, low romance, partner exists)
+    {
+        id: 'evt_betrayal',
+        title: '背叛',
+        description: '你发现TA最近总是躲着你回消息，直到你看到了不该看到的一幕。',
+        condition: (s) => !!s.romancePartner && s.general.romance < 28,
+        triggerType: 'RANDOM',
+        once: true,
+        type: 'negative',
+        choices: [
+            { 
+                text: '分手！', 
+                action: (s) => ({ 
+                    romancePartner: null,
+                    general: { ...s.general, mindset: s.general.mindset - 40, health: s.general.health - 10 },
+                    activeStatuses: s.activeStatuses.filter(st => st.id !== 'in_love'),
+                    log: [...s.log, { message: "这段感情画上了句号。", type: 'error', timestamp: Date.now() }]
+                }) 
             }
         ]
     },
