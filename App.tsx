@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Phase, GameState, GameEvent, SubjectKey, ExamResult, SubjectStats, GeneralStats, SUBJECT_NAMES, CompetitionResultData, Achievement, GameStatus } from './types';
-import { PHASE_EVENTS, BASE_EVENTS, CHAINED_EVENTS, ACHIEVEMENTS, generateStudyEvent, generateRandomFlavorEvent, SCIENCE_FESTIVAL_EVENT, NEW_YEAR_GALA_EVENT, STATUSES } from './gameData';
+import { Phase, GameState, GameEvent, SubjectKey, ExamResult, SubjectStats, GeneralStats, SUBJECT_NAMES, CompetitionResultData, Achievement, GameStatus, Difficulty } from './types';
+import { PHASE_EVENTS, BASE_EVENTS, CHAINED_EVENTS, ACHIEVEMENTS, generateStudyEvent, generateRandomFlavorEvent, SCIENCE_FESTIVAL_EVENT, NEW_YEAR_GALA_EVENT, STATUSES, DIFFICULTY_PRESETS, CHANGELOG_DATA } from './gameData';
 import StatsPanel from './components/StatsPanel';
 import ExamView from './components/ExamView';
 
@@ -60,13 +60,17 @@ const INITIAL_GAME_STATE: GameState = {
     debugMode: false,
     activeStatuses: [],
     unlockedAchievements: [],
-    achievementPopup: null
+    achievementPopup: null,
+    difficulty: 'NORMAL'
 };
 
 // --- Main App Component ---
 
 const App: React.FC = () => {
   const [view, setView] = useState<'HOME' | 'GAME'>('HOME');
+  const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('NORMAL');
+  const [customStats, setCustomStats] = useState<GeneralStats>(INITIAL_GENERAL);
+  const [showChangelog, setShowChangelog] = useState(false);
   
   // Game State
   const [state, setState] = useState<GameState>(INITIAL_GAME_STATE);
@@ -88,6 +92,9 @@ const App: React.FC = () => {
 
   const unlockAchievement = useCallback((id: string) => {
       setState(prev => {
+          // Achievement Lock for Difficulty
+          if (prev.difficulty !== 'REALITY') return prev;
+
           if (prev.unlockedAchievements.includes(id)) return prev;
           const newUnlocked = [...prev.unlockedAchievements, id];
           localStorage.setItem('bz_sim_achievements', JSON.stringify(newUnlocked));
@@ -137,8 +144,30 @@ const App: React.FC = () => {
         level: Math.floor(Math.random() * 10 + 5)
       };
     });
+
+    let initialGeneral = { ...INITIAL_GENERAL };
+    let initialStatuses: GameStatus[] = [];
+
+    // Apply Difficulty Logic
+    if (selectedDifficulty === 'CUSTOM') {
+        initialGeneral = { ...customStats };
+    } else {
+        initialGeneral = { ...DIFFICULTY_PRESETS[selectedDifficulty].stats };
+    }
+
+    // Apply Reality Debuffs
+    if (selectedDifficulty === 'REALITY') {
+        initialStatuses.push({ ...STATUSES['anxious'], duration: 4 });
+        initialStatuses.push({ ...STATUSES['debt'], duration: 2 }); // Initial debt pressure
+    }
+
     const firstEvent = PHASE_EVENTS[Phase.SUMMER].find(e => e.id === 'sum_goal_selection');
-    unlockAchievement('first_blood');
+    
+    // Achievement is only for Reality, check triggers inside unlockAchievement, but we can trigger first_blood here
+    // The unlockAchievement function inside setState handles the check, but we can't call it before setState initializes properly in this sync block.
+    // Instead, we queue it via log or just handle it inside first week logic. 
+    // Actually, calling it after setState is fine.
+
     setState(prev => ({
       ...prev,
       phase: Phase.SUMMER,
@@ -148,21 +177,19 @@ const App: React.FC = () => {
       currentEvent: firstEvent || null,
       triggeredEvents: firstEvent ? [firstEvent.id] : [],
       log: [{ message: "北京八中模拟器启动。", type: 'success', timestamp: Date.now() }],
-      activeStatuses: [],
+      activeStatuses: initialStatuses,
       className: '待分班',
       isPlaying: false,
       eventQueue: [],
-      general: {
-        mindset: Math.floor(Math.random() * 40 + 30),
-        experience: Math.floor(Math.random() * 10 + 5),
-        luck: Math.floor(Math.random() * 60 + 20),
-        romance: Math.floor(Math.random() * 30 + 20), // Increased initial romance base from 10 to 20
-        health: Math.floor(Math.random() * 30 + 70),
-        money: Math.floor(Math.random() * 50 + 10),
-        efficiency: 10
-      }
+      general: initialGeneral,
+      difficulty: selectedDifficulty
     }));
+    
     setView('GAME');
+    
+    // Delayed unlock to ensure state update (conceptually) - though setState updater is better
+    // For first_blood, we just trigger it. logic will check difficulty.
+    setTimeout(() => unlockAchievement('first_blood'), 100);
   };
 
   const endGame = () => {
@@ -171,8 +198,18 @@ const App: React.FC = () => {
 
   const processWeekStep = () => {
       setState(prev => {
-          // Check critical failures
-          if (prev.general.health <= 0 || prev.general.mindset <= 0) return { ...prev, phase: Phase.WITHDRAWAL, isPlaying: false };
+          // --- Critical Failure Check (Priority 1) ---
+          if (prev.general.health <= 0 || prev.general.mindset <= 0) {
+              return { 
+                  ...prev, 
+                  phase: Phase.WITHDRAWAL, 
+                  isPlaying: false,
+                  currentEvent: null, 
+                  eventQueue: [], 
+                  log: [...prev.log, { message: "你的身心状态已达极限，被迫休学...", type: 'error', timestamp: Date.now() }]
+              };
+          }
+          
           if (prev.general.money >= 200) unlockAchievement('rich');
           if (prev.general.health < 10 && prev.phase === Phase.SEMESTER_1) unlockAchievement('survival');
 
@@ -256,8 +293,6 @@ const App: React.FC = () => {
               // C. Fixed Events
               if (nextWeek === 15) eventsToAdd.push(SCIENCE_FESTIVAL_EVENT);
               if (nextWeek === 19) {
-                  // If in love, enhance the New Year event description or options via logic, 
-                  // but here we just push the generic wrapper which handles it via conditional choices in data or just flavor text
                   let gala = { ...NEW_YEAR_GALA_EVENT };
                   if (prev.romancePartner) {
                       gala.choices = [
@@ -445,26 +480,119 @@ const App: React.FC = () => {
       });
   };
 
+  // --- HOME VIEW (Redesigned) ---
   if (view === 'HOME') {
       return (
-          <div className="h-screen bg-white flex flex-col items-center justify-center p-10 font-sans relative overflow-hidden">
-             <div className="absolute top-0 left-0 w-full h-full opacity-5 pointer-events-none">
+          <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 md:p-10 font-sans relative overflow-hidden">
+             {/* Background Decoration */}
+             <div className="absolute top-0 left-0 w-full h-full opacity-5 pointer-events-none overflow-hidden">
                  <div className="absolute top-10 left-10 text-9xl font-black rotate-12">8</div>
                  <div className="absolute bottom-10 right-10 text-9xl font-black -rotate-12">OI</div>
              </div>
-             <div className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl mb-8 transform -rotate-6 z-10">
-                <i className="fas fa-school text-white text-5xl"></i>
+
+             {/* Header */}
+             <div className="w-20 h-20 md:w-24 md:h-24 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl mb-6 md:mb-8 transform -rotate-6 z-10">
+                <i className="fas fa-school text-white text-4xl md:text-5xl"></i>
              </div>
-             <h1 className="text-6xl font-black text-slate-800 mb-4 tracking-tighter z-10">八中重开模拟器</h1>
-             <p className="text-slate-400 mb-10 text-xl font-medium z-10">Made by lg37,致谢:OI重开模拟器</p>
-             <button onClick={startGame} className="bg-indigo-600 hover:bg-indigo-700 text-white px-10 py-4 rounded-2xl font-black text-xl shadow-xl transition-all hover:scale-105 flex items-center gap-3"><i className="fas fa-play"></i> 开启模拟</button>
+             <h1 className="text-4xl md:text-6xl font-black text-slate-800 mb-2 md:mb-4 tracking-tighter z-10 text-center">八中重开模拟器</h1>
+             <p className="text-slate-400 mb-8 md:mb-10 text-lg md:text-xl font-medium z-10">Made by lg37</p>
+
+             {/* Difficulty Selection */}
+             <div className="w-full max-w-4xl z-10 mb-8">
+                 <h3 className="text-center text-slate-500 font-bold mb-4 uppercase tracking-widest text-sm">选择你的开局难度</h3>
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                     {(Object.entries(DIFFICULTY_PRESETS) as [Difficulty, typeof DIFFICULTY_PRESETS['NORMAL']][]).map(([key, config]) => (
+                         <button key={key} onClick={() => setSelectedDifficulty(key)}
+                             className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center text-center gap-2 group ${selectedDifficulty === key ? 'border-indigo-600 bg-white shadow-xl scale-105' : 'border-transparent bg-white/50 hover:bg-white hover:shadow-md'}`}
+                         >
+                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${config.color} shadow-md`}>
+                                 {key === 'REALITY' ? <i className="fas fa-skull"></i> : key === 'HARD' ? <i className="fas fa-exclamation"></i> : <i className="fas fa-coffee"></i>}
+                             </div>
+                             <div className="font-black text-slate-800">{config.label}</div>
+                             <div className="text-[10px] text-slate-500 leading-tight">{config.desc}</div>
+                         </button>
+                     ))}
+                     <button onClick={() => setSelectedDifficulty('CUSTOM')}
+                         className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center text-center gap-2 group ${selectedDifficulty === 'CUSTOM' ? 'border-indigo-600 bg-white shadow-xl scale-105' : 'border-transparent bg-white/50 hover:bg-white hover:shadow-md'}`}
+                     >
+                          <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold shadow-md"><i className="fas fa-sliders-h"></i></div>
+                          <div className="font-black text-slate-800">自定义</div>
+                          <div className="text-[10px] text-slate-500 leading-tight">我是神，由于我太强了，所以我要自定义属性</div>
+                     </button>
+                 </div>
+             </div>
+
+             {/* Custom Stats Editor */}
+             {selectedDifficulty === 'CUSTOM' && (
+                 <div className="w-full max-w-2xl bg-white p-6 rounded-3xl shadow-lg border border-slate-100 z-10 mb-8 animate-fadeIn">
+                     <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-pen"></i> 配置初始属性</h4>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         {(Object.keys(INITIAL_GENERAL) as (keyof GeneralStats)[]).map(key => (
+                             <div key={key}>
+                                 <label className="text-xs font-bold text-slate-400 uppercase flex justify-between mb-1">
+                                     <span>{key}</span>
+                                     <span className="text-indigo-600">{customStats[key]}</span>
+                                 </label>
+                                 <input type="range" min="0" max="100" value={customStats[key]} onChange={(e) => setCustomStats(prev => ({...prev, [key]: parseInt(e.target.value)}))} 
+                                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                 />
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+
+             {/* Warnings & Start */}
+             <div className="z-10 flex flex-col items-center gap-4">
+                {selectedDifficulty !== 'REALITY' && (
+                    <div className="text-amber-600 text-xs font-bold bg-amber-50 px-4 py-2 rounded-full border border-amber-200">
+                        <i className="fas fa-exclamation-triangle mr-2"></i>注意：仅在【现实】难度下可解锁成就
+                    </div>
+                )}
+                
+                <div className="flex gap-4">
+                    <button onClick={() => setShowChangelog(true)} className="bg-white text-slate-500 px-6 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-slate-50 transition-all flex items-center gap-2">
+                        <i className="fas fa-history"></i> <span className="hidden md:inline">更新日志</span>
+                    </button>
+                    <button onClick={startGame} className="bg-indigo-600 hover:bg-indigo-700 text-white px-10 py-4 rounded-2xl font-black text-xl shadow-xl transition-all hover:scale-105 flex items-center gap-3">
+                        <i className="fas fa-play"></i> 开启模拟
+                    </button>
+                </div>
+             </div>
+
+             {/* Changelog Modal */}
+             {showChangelog && (
+                 <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn" onClick={() => setShowChangelog(false)}>
+                     <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+                         <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                             <h2 className="text-2xl font-black text-slate-800">更新日志</h2>
+                             <button onClick={() => setShowChangelog(false)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"><i className="fas fa-times"></i></button>
+                         </div>
+                         <div className="overflow-y-auto custom-scroll space-y-6 pr-2">
+                             {CHANGELOG_DATA.map((log, i) => (
+                                 <div key={i}>
+                                     <div className="flex items-baseline gap-2 mb-2">
+                                         <span className="text-lg font-bold text-indigo-600">{log.version}</span>
+                                         <span className="text-xs text-slate-400 font-mono">{log.date}</span>
+                                     </div>
+                                     <ul className="list-disc list-inside space-y-1">
+                                         {log.content.map((item, idx) => (
+                                             <li key={idx} className="text-sm text-slate-600">{item}</li>
+                                         ))}
+                                     </ul>
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                 </div>
+             )}
           </div>
       );
   }
 
   // --- GAME VIEW ---
   return (
-    <div className="h-screen bg-slate-100 flex p-4 gap-4 overflow-hidden font-sans text-slate-900 relative">
+    <div className="h-screen bg-slate-100 flex flex-col md:flex-row p-2 md:p-4 gap-2 md:gap-4 overflow-hidden font-sans text-slate-900 relative">
       {/* Toast */}
       {state.achievementPopup && (
           <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[60] bg-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-fadeIn border border-slate-700">
@@ -476,10 +604,10 @@ const App: React.FC = () => {
           </div>
       )}
 
-      {/* Sidebar */}
-      <aside className="w-80 flex-shrink-0 flex flex-col gap-4">
+      {/* Sidebar: Stacked on mobile, Side on desktop */}
+      <aside className="w-full md:w-80 flex-shrink-0 flex flex-col gap-2 md:gap-4 max-h-[30vh] md:max-h-full overflow-y-auto md:overflow-visible">
           <StatsPanel state={state} />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="hidden md:grid grid-cols-2 gap-2">
             <button onClick={() => setShowHistory(true)} className="bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600">
               <i className="fas fa-archive text-indigo-500 mb-1"></i><span className="text-xs">历程</span>
             </button>
@@ -492,17 +620,24 @@ const App: React.FC = () => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col gap-4 relative">
-        <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3">
+      <main className="flex-1 flex flex-col gap-2 md:gap-4 relative h-full overflow-hidden">
+        {/* Mobile-only Controls Toolbar */}
+        <div className="flex md:hidden gap-2 overflow-x-auto pb-1">
+             <button onClick={() => setShowAchievements(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-trophy text-yellow-500 mr-1"></i>成就</button>
+             <button onClick={() => setShowHistory(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-archive text-indigo-500 mr-1"></i>历程</button>
+             <button onClick={endGame} className="flex-shrink-0 bg-rose-50 border border-rose-100 px-3 py-2 rounded-xl text-xs font-bold text-rose-600 shadow-sm">结束</button>
+        </div>
+
+        <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3 flex-shrink-0">
                <div className="flex items-center justify-between">
-                   <div className="flex flex-col gap-1">
-                       <h2 className="font-black text-slate-800 text-lg flex items-center gap-2 uppercase tracking-tight">
-                            <span className={`w-2 h-2 rounded-full ${state.isSick ? 'bg-red-500 animate-pulse' : 'bg-indigo-500'}`}></span> {state.phase} 
+                   <div className="flex flex-col gap-1 overflow-hidden">
+                       <h2 className="font-black text-slate-800 text-lg flex items-center gap-2 uppercase tracking-tight truncate">
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${state.isSick ? 'bg-red-500 animate-pulse' : 'bg-indigo-500'}`}></span> {state.phase} 
                         </h2>
                         {/* Status Bar Fix: Explicit Height & Layout */}
-                        <div className="flex gap-2 min-h-[24px] items-center flex-wrap">
+                        <div className="flex gap-2 min-h-[24px] items-center flex-wrap overflow-hidden h-8 md:h-auto">
                             {state.activeStatuses.length > 0 ? state.activeStatuses.map(s => (
-                                <div key={s.id} className={`flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                                <div key={s.id} className={`flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm whitespace-nowrap ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
                                     <i className={`fas ${s.icon}`}></i> {s.name} ({s.duration}w)
                                 </div>
                             )) : <span className="text-[10px] text-slate-300 font-medium italic">无特殊状态</span>}
@@ -513,7 +648,7 @@ const App: React.FC = () => {
                    <button 
                       onClick={() => setState(p => ({ ...p, isPlaying: !p.isPlaying }))} 
                       disabled={!!state.currentEvent}
-                      className={`w-16 h-16 rounded-full flex items-center justify-center shadow-xl transition-all ${state.currentEvent ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                      className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex-shrink-0 flex items-center justify-center shadow-xl transition-all ${state.currentEvent ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
                    >
                       <i className={`fas ${state.isPlaying ? 'fa-pause' : 'fa-play'} text-xl`}></i>
                    </button>
@@ -522,12 +657,12 @@ const App: React.FC = () => {
                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                        <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${calculateProgress(state)}%` }}></div>
                     </div>
-                    <span className="text-[10px] font-bold text-slate-400">Week {state.week}/{state.totalWeeksInPhase || '-'}</span>
+                    <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">Week {state.week}/{state.totalWeeksInPhase || '-'}</span>
                </div>
         </header>
 
         {/* Log Area */}
-        <div className="flex-1 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3">
+        <div className="flex-1 bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3">
              {state.log.map((l, i) => (
                 <div key={i} className={`p-3 rounded-xl border-l-4 animate-fadeIn ${l.type === 'event' ? 'bg-indigo-50 border-indigo-400' : l.type === 'success' ? 'bg-emerald-50 border-emerald-400' : l.type === 'error' ? 'bg-rose-50 border-rose-400' : 'bg-slate-50 border-slate-300'}`}>
                    <p className="text-sm font-medium">{l.message}</p>
@@ -538,15 +673,15 @@ const App: React.FC = () => {
 
         {/* Event Modal Overlay */}
         {state.currentEvent && (
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-8 z-20 animate-fadeIn">
-               <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-xl w-full border border-slate-200">
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 md:p-8 z-20 animate-fadeIn">
+               <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-xl w-full border border-slate-200 max-h-[85vh] overflow-y-auto custom-scroll">
                   {!state.eventResult ? (
                     <>
                       <div className="flex justify-between items-start mb-4">
-                          <h2 className="text-2xl font-black text-slate-800">{state.currentEvent.title}</h2>
-                          {state.eventQueue.length > 0 && <span className="bg-rose-100 text-rose-600 text-[10px] font-bold px-2 py-1 rounded-full">+{state.eventQueue.length} 更多事件</span>}
+                          <h2 className="text-xl md:text-2xl font-black text-slate-800">{state.currentEvent.title}</h2>
+                          {state.eventQueue.length > 0 && <span className="bg-rose-100 text-rose-600 text-[10px] font-bold px-2 py-1 rounded-full whitespace-nowrap">+{state.eventQueue.length} 更多</span>}
                       </div>
-                      <p className="text-slate-600 mb-8 text-lg leading-relaxed">{state.currentEvent.description}</p>
+                      <p className="text-slate-600 mb-8 text-base md:text-lg leading-relaxed">{state.currentEvent.description}</p>
                       <div className="space-y-3">
                          {state.currentEvent.choices?.map((c, i) => (
                            <button key={i} onClick={() => handleChoice(c)} className="w-full text-left p-4 rounded-2xl bg-slate-50 hover:bg-indigo-600 hover:text-white border border-slate-200 transition-all font-bold group flex justify-between items-center">
@@ -578,9 +713,9 @@ const App: React.FC = () => {
         
         {/* Exams / Selection / Endings */}
         {(state.phase === Phase.SELECTION || state.phase === Phase.SUBJECT_RESELECTION) && (
-            <div className="absolute inset-0 bg-white rounded-3xl z-30 p-10 flex flex-col items-center justify-center">
+            <div className="absolute inset-0 bg-white/95 z-30 p-4 md:p-10 flex flex-col items-center justify-center rounded-2xl">
                <h2 className="text-3xl font-black mb-4">高一选科</h2>
-               <div className="grid grid-cols-3 gap-4 mb-10 w-full max-w-lg">
+               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-10 w-full max-w-lg">
                   {(['physics', 'chemistry', 'biology', 'history', 'geography', 'politics'] as SubjectKey[]).map(s => (
                     <button key={s} onClick={() => setState(prev => ({ ...prev, selectedSubjects: prev.selectedSubjects.includes(s) ? prev.selectedSubjects.filter(x => x !== s) : (prev.selectedSubjects.length < 3 ? [...prev.selectedSubjects, s] : prev.selectedSubjects) }))}
                       className={`p-4 rounded-2xl border-2 transition-all font-bold ${state.selectedSubjects.includes(s) ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
@@ -593,7 +728,7 @@ const App: React.FC = () => {
         )}
         
         {(state.phase === Phase.PLACEMENT_EXAM || state.phase === Phase.FINAL_EXAM || state.phase === Phase.MIDTERM_EXAM || state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) && (
-             <div className="absolute inset-0 z-40">
+             <div className="absolute inset-0 z-40 rounded-2xl overflow-hidden">
                  <ExamView 
                     title={state.phase === Phase.PLACEMENT_EXAM ? "分班考试" : state.phase === Phase.CSP_EXAM ? "CSP 认证" : "期末考试"} 
                     state={state} 
@@ -604,15 +739,15 @@ const App: React.FC = () => {
 
         {/* Final Settlement Overlay */}
         {(state.phase === Phase.ENDING || state.phase === Phase.WITHDRAWAL) && (
-            <div className="absolute inset-0 z-50 bg-slate-900 text-white flex flex-col items-center justify-center p-10 animate-fadeIn">
-                <h1 className="text-4xl font-black mb-6 tracking-tight text-center">
-                    {state.phase === Phase.WITHDRAWAL ? 'BAD ENDING' : 'GAME OVER'}
+            <div className="absolute inset-0 z-50 bg-slate-900 text-white flex flex-col items-center justify-center p-4 md:p-10 animate-fadeIn overflow-y-auto">
+                <h1 className="text-3xl md:text-4xl font-black mb-4 md:mb-6 tracking-tight text-center mt-10 md:mt-0">
+                    {state.phase === Phase.WITHDRAWAL ? '被迫休学' : '模拟结束'}
                 </h1>
-                <p className="text-xl mb-10 text-slate-300 text-center max-w-xl">
-                    {state.phase === Phase.WITHDRAWAL ? "你的高一生活因故提前结束了。也许休息一下，重新开始会更好。" : "你完成了北京八中高一上学期的全部挑战。这是一段难忘的旅程。"}
+                <p className="text-lg md:text-xl mb-6 md:mb-10 text-slate-300 text-center max-w-xl">
+                    {state.phase === Phase.WITHDRAWAL ? "由于身体或心理状况无法支撑高强度的学习生活，你不得不办理了休学手续。身体是革命的本钱，养好身体再出发吧。" : "你完成了北京八中高一上学期的全部挑战。这是一段难忘的旅程。"}
                 </p>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-3xl mb-10">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 w-full max-w-3xl mb-10">
                     <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl">
                         <h3 className="text-slate-400 font-bold mb-4 uppercase text-xs tracking-widest border-b border-slate-700 pb-2">最终属性</h3>
                         <div className="space-y-3 font-mono text-sm">
@@ -628,43 +763,47 @@ const App: React.FC = () => {
                              <div className="flex justify-between"><span>最终班级</span><span className="font-bold">{state.className}</span></div>
                              <div className="flex justify-between"><span>选择竞赛</span><span className="font-bold">{state.competition}</span></div>
                              <div className="flex justify-between"><span>解锁成就</span><span className="text-yellow-400 font-bold">{state.unlockedAchievements.length} 个</span></div>
+                             <div className="flex justify-between"><span>游戏难度</span><span className="text-orange-400 font-bold text-xs border border-orange-500/50 px-1 rounded">{state.difficulty}</span></div>
                              {state.examResult?.rank && <div className="flex justify-between"><span>最终排名</span><span className="text-indigo-400 font-bold">#{state.examResult.rank} / {state.examResult.totalStudents}</span></div>}
                         </div>
                     </div>
                 </div>
 
-                <button onClick={() => setView('HOME')} className="bg-white text-slate-900 px-12 py-4 rounded-full font-black text-lg hover:scale-105 transition-transform shadow-lg hover:shadow-white/20">
+                <button onClick={() => setView('HOME')} className="bg-white text-slate-900 px-12 py-4 rounded-full font-black text-lg hover:scale-105 transition-transform shadow-lg hover:shadow-white/20 mb-10">
                     <i className="fas fa-redo mr-2"></i> 重开模拟
                 </button>
             </div>
         )}
 
         {state.popupCompetitionResult && (
-             <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn">
-                <div className="bg-white rounded-[40px] p-12 text-center max-w-lg shadow-2xl relative border-4 border-yellow-400">
+             <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn p-4">
+                <div className="bg-white rounded-[40px] p-8 md:p-12 text-center max-w-lg w-full shadow-2xl relative border-4 border-yellow-400">
                     <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 bg-yellow-400 rounded-full flex items-center justify-center shadow-lg border-4 border-white"><i className="fas fa-trophy text-white text-4xl"></i></div>
-                    <h3 className="text-3xl font-black text-slate-800 mt-6 mb-2">{state.popupCompetitionResult.title}</h3>
+                    <h3 className="text-2xl md:text-3xl font-black text-slate-800 mt-6 mb-2">{state.popupCompetitionResult.title}</h3>
                     <div className="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
                         <div className="text-4xl font-black text-indigo-600 mb-2">{state.popupCompetitionResult.score} pts</div>
                         <div className="text-2xl font-bold text-yellow-600">{state.popupCompetitionResult.award}</div>
                     </div>
-                    <button onClick={closeCompetitionPopup} className="bg-indigo-600 text-white px-12 py-4 rounded-2xl font-black text-xl hover:bg-indigo-700 shadow-xl">收入囊中</button>
+                    <button onClick={closeCompetitionPopup} className="bg-indigo-600 text-white px-12 py-4 rounded-2xl font-black text-xl hover:bg-indigo-700 shadow-xl w-full">收入囊中</button>
                 </div>
              </div>
         )}
 
         {showAchievements && (
-             <div className="absolute inset-0 z-[60] flex justify-center items-center bg-slate-900/50 backdrop-blur-sm animate-fadeIn" onClick={() => setShowAchievements(false)}>
-                <div className="bg-white rounded-[40px] p-8 max-w-4xl w-full h-3/4 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+             <div className="absolute inset-0 z-[60] flex justify-center items-center bg-slate-900/50 backdrop-blur-sm animate-fadeIn p-4" onClick={() => setShowAchievements(false)}>
+                <div className="bg-white rounded-[40px] p-6 md:p-8 max-w-4xl w-full h-3/4 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-between items-center mb-6">
-                         <h2 className="text-3xl font-black text-slate-800">成就墙</h2>
+                         <div>
+                            <h2 className="text-3xl font-black text-slate-800">成就墙</h2>
+                            {state.difficulty !== 'REALITY' && <p className="text-xs text-rose-500 font-bold mt-1">当前难度无法解锁新成就</p>}
+                         </div>
                          <button onClick={() => setShowAchievements(false)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"><i className="fas fa-times"></i></button>
                     </div>
-                    <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {Object.values(ACHIEVEMENTS).map(ach => (
                             <div key={ach.id} className={`p-4 rounded-2xl border flex items-center gap-4 ${state.unlockedAchievements.includes(ach.id) ? 'bg-indigo-50 border-indigo-200' : 'opacity-50 grayscale'}`}>
-                                <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow"><i className={`fas ${ach.icon} text-indigo-500`}></i></div>
-                                <div><h4 className="font-bold">{ach.title}</h4><p className="text-xs">{ach.description}</p></div>
+                                <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow flex-shrink-0"><i className={`fas ${ach.icon} text-indigo-500`}></i></div>
+                                <div><h4 className="font-bold text-sm md:text-base">{ach.title}</h4><p className="text-[10px] md:text-xs text-slate-500">{ach.description}</p></div>
                             </div>
                         ))}
                     </div>
@@ -674,7 +813,7 @@ const App: React.FC = () => {
 
         {showHistory && (
              <div className="absolute inset-0 z-[60] flex justify-end bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={() => setShowHistory(false)}>
-                <div className="w-96 bg-white h-full shadow-2xl p-8 flex flex-col animate-slideInRight" onClick={e => e.stopPropagation()}>
+                <div className="w-full md:w-96 bg-white h-full shadow-2xl p-6 md:p-8 flex flex-col animate-slideInRight" onClick={e => e.stopPropagation()}>
                    <div className="flex justify-between items-center mb-8 border-b pb-4">
                       <h2 className="text-2xl font-black text-slate-800 tracking-tight">故事线存档</h2>
                       <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-800 text-xl"><i className="fas fa-times"></i></button>
