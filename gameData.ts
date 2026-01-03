@@ -1,5 +1,5 @@
 
-import { Phase, GameEvent, SubjectKey, GameState, Achievement, GameStatus, SUBJECT_NAMES, Difficulty, GeneralStats, Club, WeekendActivity, OIStats, OIProblem } from './types';
+import { Phase, GameEvent, SubjectKey, GameState, Achievement, GameStatus, SUBJECT_NAMES, Difficulty, GeneralStats, Club, WeekendActivity, OIStats, OIProblem, Talent, Item } from './types';
 
 const modifySub = (s: GameState, keys: SubjectKey[], val: number) => {
   const newSubs = { ...s.subjects };
@@ -30,13 +30,13 @@ export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: 
         desc: '体验相对轻松的高中生活。(属性大幅提升，更易获得高分)',
         color: 'bg-emerald-500',
         stats: {
-            mindset: 65, // Buffed
-            experience: 20,
-            luck: 55,
+            mindset: 40, // Buffed
+            experience: 15,
+            luck: 45,
             romance: 40,
-            health: 100,
-            money: 150,
-            efficiency: 20 // Buffed significantly
+            health: 80,
+            money: 80,
+            efficiency: 14 // Buffed significantly
         }
     },
     'HARD': {
@@ -44,7 +44,7 @@ export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: 
         desc: '资源紧张，压力较大。',
         color: 'bg-orange-500',
         stats: {
-            mindset: 40,
+            mindset: 35,
             experience: 10,
             luck: 40,
             romance: 10,
@@ -68,6 +68,84 @@ export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: 
         }
     }
 };
+
+// --- Talents ---
+
+export const TALENTS: Talent[] = [
+    // --- Legendary (Cost 4) ---
+    { id: 'genius', name: '天生我才', description: '全学科天赋+10，效率+5。', rarity: 'legendary', cost: 4,
+      effect: (s) => {
+          const newSubs = { ...s.subjects };
+          (Object.keys(newSubs) as SubjectKey[]).forEach(k => newSubs[k].aptitude += 10);
+          return { subjects: newSubs, general: { ...s.general, efficiency: s.general.efficiency + 5 } };
+      }
+    },
+    { id: 'rich_kid', name: '家里有矿', description: '初始金钱+100。', rarity: 'legendary', cost: 4,
+      effect: (s) => ({ general: { ...s.general, money: s.general.money + 100 } })
+    },
+    // --- Rare (Cost 2-3) ---
+    { id: 'attractive', name: '万人迷', description: '初始魅力+20，恋爱事件概率UP。', rarity: 'rare', cost: 2,
+      effect: (s) => ({ general: { ...s.general, romance: s.general.romance + 20 } })
+    },
+    { id: 'oi_nerd', name: '机房幽灵', description: 'OI各项能力初始+10，但魅力-10。', rarity: 'rare', cost: 3,
+      effect: (s) => ({ 
+          oiStats: modifyOI(s, { dp: 10, ds: 10, math: 10, string: 10, graph: 10, misc: 10 }),
+          general: { ...s.general, romance: Math.max(0, s.general.romance - 10) }
+      })
+    },
+    { id: 'lucky_dog', name: '锦鲤附体', description: '初始运气+30。', rarity: 'rare', cost: 2,
+        effect: (s) => ({ general: { ...s.general, luck: s.general.luck + 30 } })
+    },
+    // --- Common (Cost 1) ---
+    { id: 'healthy', name: '体育特长', description: '初始健康+20。', rarity: 'common', cost: 1,
+      effect: (s) => ({ general: { ...s.general, health: s.general.health + 20 } })
+    },
+    { id: 'optimist', name: '乐天派', description: '初始心态+20。', rarity: 'common', cost: 1,
+        effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 20 } })
+    },
+    { id: 'poor_student', name: '寒门学子', description: '初始金钱-50，但意志坚定（心态+10，效率+2）。', rarity: 'common', cost: 1,
+        effect: (s) => ({ general: { ...s.general, money: Math.max(0, s.general.money - 50), mindset: s.general.mindset + 10, efficiency: s.general.efficiency + 2 } })
+    },
+
+    // --- Cursed (Negative Cost = Gives Points) ---
+    { id: 'poverty', name: '家徒四壁', description: '初始金钱归零，且背负100元债务。', rarity: 'cursed', cost: -2,
+      effect: (s) => ({ general: { ...s.general, money: -100 } })
+    },
+    { id: 'frail', name: '体弱多病', description: '初始健康降低，稍不注意就会生病。', rarity: 'cursed', cost: -2,
+      effect: (s) => ({ general: { ...s.general, health: 20 } })
+    },
+    { id: 'loner', name: '孤僻', description: '初始魅力归零，很难建立人际关系。', rarity: 'cursed', cost: -1,
+      effect: (s) => ({ general: { ...s.general, romance: 0 } })
+    },
+    { id: 'dumb', name: '笨鸟先飞', description: '效率-7，学习非常吃力。', rarity: 'cursed', cost: -3,
+      effect: (s) => ({ general: { ...s.general, efficiency: Math.max(1, s.general.efficiency - 7) } })
+    },
+    { id: 'bad_luck', name: '非酋', description: '运气-20，喝凉水都塞牙。', rarity: 'cursed', cost: -1,
+      effect: (s) => ({ general: { ...s.general, luck: Math.max(0, s.general.luck - 20) } })
+    }
+];
+
+// --- Shop Items ---
+
+export const SHOP_ITEMS: Item[] = [
+    { id: 'red_bull', name: '红牛', description: '精力充沛！效率+2，健康-1。', price: 15, icon: 'fa-bolt', 
+      effect: (s) => ({ general: { ...s.general, efficiency: s.general.efficiency + 2, health: s.general.health - 1, money: s.general.money - 15 } }) },
+    { id: 'coffee', name: '瑞幸冰美式', description: '提神醒脑。心态+3，效率+1。', price: 20, icon: 'fa-coffee',
+      effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 3, efficiency: s.general.efficiency + 1, money: s.general.money - 20 } }) },
+    { id: 'five_three', name: '五年高考三年模拟', description: '刷题神器。全科水平+2，心态-3。', price: 45, icon: 'fa-book',
+      effect: (s) => ({ 
+          subjects: modifySub(s, ['chinese', 'math', 'english', 'physics', 'chemistry', 'biology'], 2), 
+          general: { ...s.general, mindset: s.general.mindset - 3, money: s.general.money - 45 } 
+      }) },
+    { id: 'game_skin', name: '游戏皮肤', description: '虽然不能变强，但心情变好了。心态+8。', price: 68, icon: 'fa-gamepad',
+      effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 8, money: s.general.money - 68 } }) },
+    { id: 'flowers', name: '鲜花', description: '送给心仪的人。魅力+5，若有对象则大幅提升关系。', price: 50, icon: 'fa-fan',
+      effect: (s) => ({ general: { ...s.general, romance: s.general.romance + 5, money: s.general.money - 50, mindset: s.general.mindset + (s.romancePartner ? 5 : 0) } }) },
+    { id: 'algo_book', name: '算法导论', description: '厚得可以当枕头。OI能力全面+2。', price: 80, icon: 'fa-code',
+      effect: (s) => ({ oiStats: modifyOI(s, { dp: 2, ds: 2, math: 2, graph: 2, string: 2, misc: 2 }), general: { ...s.general, money: s.general.money - 80 } }) },
+    { id: 'gym_card', name: '健身卡', description: '强身健体。健康+15。', price: 100, icon: 'fa-dumbbell',
+      effect: (s) => ({ general: { ...s.general, health: s.general.health + 15, money: s.general.money - 100 } }) }
+];
 
 // --- Definitions ---
 
