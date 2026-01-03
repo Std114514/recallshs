@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Phase, GameState, GameEvent, SubjectKey, ExamResult, SubjectStats, GeneralStats, SUBJECT_NAMES, CompetitionResultData, Achievement, GameStatus, Difficulty } from './types';
-import { PHASE_EVENTS, BASE_EVENTS, CHAINED_EVENTS, ACHIEVEMENTS, generateStudyEvent, generateRandomFlavorEvent, SCIENCE_FESTIVAL_EVENT, NEW_YEAR_GALA_EVENT, STATUSES, DIFFICULTY_PRESETS, CHANGELOG_DATA } from './gameData';
+import { Phase, GameState, GameEvent, SubjectKey, ExamResult, SubjectStats, GeneralStats, SUBJECT_NAMES, CompetitionResultData, Achievement, GameStatus, Difficulty, Club, ClubId, WeekendActivity, OIStats, GameLogEntry } from './types';
+import { PHASE_EVENTS, BASE_EVENTS, CHAINED_EVENTS, ACHIEVEMENTS, generateStudyEvent, generateRandomFlavorEvent, SCIENCE_FESTIVAL_EVENT, NEW_YEAR_GALA_EVENT, STATUSES, DIFFICULTY_PRESETS, CHANGELOG_DATA, CLUBS, WEEKEND_ACTIVITIES } from './gameData';
 import StatsPanel from './components/StatsPanel';
 import ExamView from './components/ExamView';
 
@@ -34,6 +34,15 @@ const INITIAL_GENERAL: GeneralStats = {
   efficiency: 10
 };
 
+const INITIAL_OI_STATS: OIStats = {
+    dp: 0,
+    ds: 0,
+    math: 0,
+    string: 0,
+    graph: 0,
+    misc: 0
+};
+
 const INITIAL_GAME_STATE: GameState = {
     isPlaying: false,
     eventQueue: [],
@@ -42,8 +51,10 @@ const INITIAL_GAME_STATE: GameState = {
     totalWeeksInPhase: 0,
     subjects: INITIAL_SUBJECTS,
     general: INITIAL_GENERAL,
+    oiStats: INITIAL_OI_STATS,
     selectedSubjects: [],
     competition: 'None',
+    club: null,
     romancePartner: null,
     className: '待分班',
     log: [],
@@ -61,7 +72,11 @@ const INITIAL_GAME_STATE: GameState = {
     activeStatuses: [],
     unlockedAchievements: [],
     achievementPopup: null,
-    difficulty: 'NORMAL'
+    difficulty: 'NORMAL',
+    isWeekend: false,
+    weekendActionPoints: 0,
+    weekendProcessed: false,
+    sleepCount: 0
 };
 
 // --- Main App Component ---
@@ -71,12 +86,22 @@ const App: React.FC = () => {
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('NORMAL');
   const [customStats, setCustomStats] = useState<GeneralStats>(INITIAL_GENERAL);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showClubSelection, setShowClubSelection] = useState(false); // UI State for club modal
   
   // Game State
   const [state, setState] = useState<GameState>(INITIAL_GAME_STATE);
   const [showHistory, setShowHistory] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  // New State for Weekend Activity Result Modal
+  const [weekendResult, setWeekendResult] = useState<{
+      activity: WeekendActivity;
+      diff: string[];
+      resultText: string;
+      newState: GameState;
+  } | null>(null);
+
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -114,17 +139,18 @@ const App: React.FC = () => {
   // --- Core Game Loop: Time Flow ---
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
-    if (state.isPlaying && !state.currentEvent && state.eventQueue.length === 0 && !state.popupCompetitionResult && state.phase !== Phase.ENDING && state.phase !== Phase.WITHDRAWAL) {
+    // IMPORTANT: Stop timer if it's weekend, showing popup, or event active
+    if (state.isPlaying && !state.currentEvent && state.eventQueue.length === 0 && !state.popupCompetitionResult && state.phase !== Phase.ENDING && state.phase !== Phase.WITHDRAWAL && !state.isWeekend && !weekendResult) {
         interval = setInterval(() => {
             processWeekStep();
         }, 1500); // 1.5s per week
     }
     return () => clearInterval(interval);
-  }, [state.isPlaying, state.currentEvent, state.eventQueue, state.popupCompetitionResult, state.phase]);
+  }, [state.isPlaying, state.currentEvent, state.eventQueue, state.popupCompetitionResult, state.phase, state.isWeekend, weekendResult]);
 
   // --- Core Game Loop: Queue Processing ---
   useEffect(() => {
-      if (!state.currentEvent && state.eventQueue.length > 0 && !state.popupCompetitionResult) {
+      if (!state.currentEvent && state.eventQueue.length > 0 && !state.popupCompetitionResult && !state.isWeekend && !weekendResult) {
           const nextEvent = state.eventQueue[0];
           setState(prev => ({
               ...prev,
@@ -133,7 +159,7 @@ const App: React.FC = () => {
               isPlaying: false // Pause for event
           }));
       }
-  }, [state.eventQueue, state.currentEvent, state.popupCompetitionResult]);
+  }, [state.eventQueue, state.currentEvent, state.popupCompetitionResult, state.isWeekend, weekendResult]);
 
 
   const startGame = () => {
@@ -183,7 +209,10 @@ const App: React.FC = () => {
       isPlaying: false,
       eventQueue: [],
       general: initialGeneral,
-      difficulty: selectedDifficulty
+      oiStats: INITIAL_OI_STATS,
+      difficulty: selectedDifficulty,
+      weekendProcessed: false,
+      sleepCount: 0
     }));
     
     setView('GAME');
@@ -209,7 +238,7 @@ const App: React.FC = () => {
           }
           
           if (prev.general.money >= 200) unlockAchievement('rich');
-          if (prev.general.money <= -100) unlockAchievement('in_debt');
+          if (prev.general.money <= -250) unlockAchievement('in_debt');
           if (prev.general.health < 10 && prev.phase === Phase.SEMESTER_1) unlockAchievement('survival');
           if (prev.general.romance >= 95) unlockAchievement('romance_master');
 
@@ -219,21 +248,38 @@ const App: React.FC = () => {
           let nextTotal = prev.totalWeeksInPhase;
           let eventsToAdd: GameEvent[] = [];
           let forcePause = false;
+          let triggerClubSelection = false;
+
+          // Temporary state accumulators to avoid mutation
+          let nextGeneral = { ...prev.general };
+          let nextSubjects = { ...prev.subjects };
+          let nextOIStats = { ...prev.oiStats };
+          let newLogs: GameLogEntry[] = [];
 
           // --- Phase Transition Logic ---
           if (prev.phase === Phase.SUMMER && prev.week >= 5) { 
-              nextPhase = Phase.MILITARY; nextWeek = 1; nextTotal = 1; 
-          } else if (prev.phase === Phase.MILITARY && prev.week >= 1) { 
+              // UPDATE: Set Military duration to 2 weeks
+              nextPhase = Phase.MILITARY; nextWeek = 1; nextTotal = 2; 
+          } else if (prev.phase === Phase.MILITARY && prev.week >= 2) { 
+              // UPDATE: Check for week 2 completion
               nextPhase = Phase.SELECTION; nextWeek = 0; forcePause = true;
           } else if (prev.phase === Phase.SEMESTER_1) {
+              // Club Selection Trigger (Week 2)
+              if (prev.week === 2 && !prev.club) triggerClubSelection = true;
+
               if (prev.competition === 'OI' && prev.week === 10) { nextPhase = Phase.CSP_EXAM; forcePause = true; }
               else if (prev.week === 11) { nextPhase = Phase.MIDTERM_EXAM; forcePause = true; } 
               else if (prev.competition === 'OI' && prev.week === 18) { nextPhase = Phase.NOIP_EXAM; forcePause = true; }
               else if (prev.week >= 21) { nextPhase = Phase.FINAL_EXAM; nextWeek = 0; forcePause = true; }
           }
 
+          if (triggerClubSelection) {
+              setShowClubSelection(true);
+              forcePause = true;
+          }
+
           // If Phase Changed due to exams/selection, stop timer and return
-          if (nextPhase !== prev.phase) {
+          if (nextPhase !== prev.phase || triggerClubSelection) {
               return {
                   ...prev,
                   phase: nextPhase,
@@ -243,42 +289,114 @@ const App: React.FC = () => {
               };
           }
 
+          // --- WEEKEND LOGIC CHECK ---
+          // Before processing the new week, check if we need to pause for Weekend
+          // Only in Semester 1 (for now), and ONLY if we haven't processed weekend for this week yet
+          if (prev.phase === Phase.SEMESTER_1 && !prev.isWeekend && !prev.weekendProcessed && prev.week > 0) {
+               // Calculate available Action Points
+               let ap = 2; // Base AP
+               
+               // OI Deduction
+               if (prev.competition === 'OI') {
+                   ap -= 1;
+                   newLogs.push({ message: "【周末】你参加了半天竞赛课，OI能力略微提升。", type: 'info', timestamp: Date.now() });
+                   // Passive OI Stat gain
+                   nextOIStats.misc += 0.5;
+               }
+
+               // Club Deduction (Every 4 weeks: 4, 8, 12, 16, 20)
+               if (prev.club && prev.club !== 'none' && prev.week % 4 === 0) {
+                   ap -= 1;
+                   const clubData = CLUBS.find(c => c.id === prev.club);
+                   if (clubData) {
+                       newLogs.push({ message: `【周末】你参加了${clubData.name}的活动。`, type: 'info', timestamp: Date.now() });
+                       const updates = clubData.action(prev);
+                       if (updates.general) nextGeneral = { ...nextGeneral, ...updates.general };
+                       if (updates.subjects) nextSubjects = { ...nextSubjects, ...updates.subjects }; // Shallow merge fix needed if partial
+                   }
+               }
+               
+               // If AP > 0, pause for weekend interaction
+               if (ap > 0) {
+                   return {
+                       ...prev,
+                       general: nextGeneral,
+                       subjects: nextSubjects,
+                       oiStats: nextOIStats,
+                       isWeekend: true,
+                       weekendActionPoints: ap,
+                       isPlaying: false,
+                       log: [...prev.log, ...newLogs, { message: "周末到了，你有一些自由支配的时间。", type: 'info', timestamp: Date.now() }]
+                   };
+               } else {
+                   // No AP left, auto-skip weekend but show logs
+                   newLogs.push({ message: "这个周末行程排满了，你没有自由活动时间。", type: 'warning', timestamp: Date.now() });
+                   // Fall through to process end of week and increment, implicitly "processing" the weekend
+               }
+          }
+
           // --- Weekly Logic (Same Phase) ---
 
           // 1. Decay & Status Effects
           let activeStatuses = prev.activeStatuses.map(s => ({ ...s, duration: s.duration - 1 })).filter(s => s.duration > 0);
           
           // Money Allowance
-          let updatedGeneral = { ...prev.general, health: Math.max(0, prev.general.health - 0.8), money: prev.general.money + 2 };
+          nextGeneral.health = Math.max(0, nextGeneral.health - 0.8);
+          nextGeneral.money += 2;
 
-          // Debt Check Logic (Condition-based status)
-          if (updatedGeneral.money <= 0) {
+          // Debt Event Logic (Random Trigger)
+          if (nextGeneral.money < 0) {
              if (!activeStatuses.find(s => s.id === 'debt')) {
-                 activeStatuses.push({ ...STATUSES['debt'], duration: 1 }); // Re-adds every week if condition met
+                 activeStatuses.push({ ...STATUSES['debt'], duration: 1 });
              } else {
-                 // Refresh duration
                  activeStatuses = activeStatuses.map(s => s.id === 'debt' ? { ...s, duration: 1 } : s);
              }
+             
+             // UPDATE: Simple probability check for Debt Collection
+             if (Math.random() < 0.3) { // 30% chance each week while in debt
+                 eventsToAdd.unshift(BASE_EVENTS['debt_collection']);
+             }
           } else {
-             // Remove debt if money positive
              activeStatuses = activeStatuses.filter(s => s.id !== 'debt');
           }
 
-          // Crush Pending Logic
-          if (updatedGeneral.romance >= 25 && !prev.romancePartner) {
-              if (Math.random() < 0.2 && !activeStatuses.find(s => s.id === 'crush_pending')) {
+          // Crush Pending & Crush Status Logic
+          if (nextGeneral.romance >= 25 && !prev.romancePartner) {
+              if (Math.random() < 0.2 && !activeStatuses.find(s => s.id === 'crush_pending') && !activeStatuses.find(s => s.id === 'crush')) {
                    activeStatuses.push({ ...STATUSES['crush_pending'], duration: 3 });
               }
+              // TRIGGER FOR REAL CRUSH
+              if (nextGeneral.romance >= 35 && Math.random() < 0.15 && !activeStatuses.find(s => s.id === 'crush')) {
+                  activeStatuses.push({ ...STATUSES['crush'], duration: 4 });
+                  newLogs.push({ message: "你发现自己似乎喜欢上了某个人...", type: 'event', timestamp: Date.now() });
+              }
+          }
+
+          // Focused & Exhausted Logic
+          // Exhausted: Health < 30
+          if (nextGeneral.health < 30 && !activeStatuses.find(s => s.id === 'exhausted')) {
+              if (Math.random() < 0.4) {
+                 activeStatuses.push({ ...STATUSES['exhausted'], duration: 3 });
+                 newLogs.push({ message: "身体亮起了红灯，你进入了【透支】状态。", type: 'warning', timestamp: Date.now() });
+              }
+          }
+          // Focused: Efficiency > 15 & Mindset > 70
+          if (nextGeneral.efficiency > 15 && nextGeneral.mindset > 70 && !activeStatuses.find(s => s.id === 'focused')) {
+               if (Math.random() < 0.15) {
+                   activeStatuses.push({ ...STATUSES['focused'], duration: 2 });
+                   newLogs.push({ message: "状态极佳，你进入了【心流】状态。", type: 'success', timestamp: Date.now() });
+               }
           }
 
           // Apply Status Effects
           activeStatuses.forEach(s => {
-              if (s.id === 'anxious') updatedGeneral.mindset -= 2;
-              if (s.id === 'exhausted') updatedGeneral.health -= 2;
-              if (s.id === 'focused') updatedGeneral.efficiency += 2;
-              if (s.id === 'in_love') updatedGeneral.mindset += 5;
-              if (s.id === 'debt') { updatedGeneral.mindset -= 5; updatedGeneral.romance -= 3; }
-              if (s.id === 'crush_pending') { updatedGeneral.luck += 2; updatedGeneral.experience += 2; }
+              if (s.id === 'anxious') nextGeneral.mindset -= 2;
+              if (s.id === 'exhausted') nextGeneral.health -= 2;
+              if (s.id === 'focused') nextGeneral.efficiency += 2;
+              if (s.id === 'in_love') nextGeneral.mindset += 5;
+              if (s.id === 'debt') { nextGeneral.mindset -= 5; nextGeneral.romance -= 3; }
+              if (s.id === 'crush_pending') { nextGeneral.luck += 2; nextGeneral.experience += 2; }
+              if (s.id === 'crush') { nextGeneral.efficiency -= 2; nextGeneral.romance += 2; }
           });
 
           // 2. Generate Events for this week
@@ -310,19 +428,17 @@ const App: React.FC = () => {
               }
           }
           
-          // Debt Collection Event (Priority)
-          if (updatedGeneral.money < -100 && Math.random() < 0.3) {
-             eventsToAdd.unshift(BASE_EVENTS['debt_collection']);
-          }
-
           // D. Phase specific random events (Summer/Military)
           const phaseEvents = PHASE_EVENTS[nextPhase] || [];
           const eligible = phaseEvents.filter(e => e.triggerType !== 'FIXED' && (!e.once || !prev.triggeredEvents.includes(e.id)) && (!e.condition || e.condition(prev)));
           
-          // INCREASED PROBABILITY FOR SUMMER/MILITARY as requested
           let eventProb = 0.4;
-          if (nextPhase === Phase.SUMMER || nextPhase === Phase.MILITARY) {
+          if (nextPhase === Phase.SUMMER) {
               eventProb = 0.8; 
+          }
+          // GUARANTEE EVENT IN MILITARY (It's short)
+          if (nextPhase === Phase.MILITARY) {
+              eventProb = 1.0;
           }
 
           if (eligible.length > 0 && Math.random() < eventProb) {
@@ -334,10 +450,13 @@ const App: React.FC = () => {
             phase: nextPhase, 
             week: nextWeek, 
             totalWeeksInPhase: nextTotal,
-            general: updatedGeneral,
+            general: nextGeneral,
+            subjects: nextSubjects,
+            oiStats: nextOIStats,
             activeStatuses,
             eventQueue: [...prev.eventQueue, ...eventsToAdd],
-            log: [...prev.log, { message: `Week ${nextWeek}`, type: 'info', timestamp: Date.now() }]
+            log: [...prev.log, ...newLogs, { message: `Week ${nextWeek}`, type: 'info', timestamp: Date.now() }],
+            weekendProcessed: false // Reset flag for the new week
           };
       });
   };
@@ -356,8 +475,10 @@ const App: React.FC = () => {
           if (Math.floor(newG.money) !== Math.floor(oldG.money)) diff.push(`金钱 ${newG.money - oldG.money > 0 ? '+' : ''}${Math.floor(newG.money - oldG.money)}`);
           if (Math.floor(newG.romance) !== Math.floor(oldG.romance)) diff.push(`魅力 ${newG.romance - oldG.romance > 0 ? '+' : ''}${Math.floor(newG.romance - oldG.romance)}`);
       }
+      if (updates.oiStats) diff.push("OI能力提升");
       if (updates.subjects) diff.push("学科能力变动");
       if (updates.activeStatuses) diff.push("状态更新");
+      if (updates.sleepCount) diff.push("睡觉次数+1");
       if (diff.length === 0) diff.push("无明显变化");
 
       return { 
@@ -380,7 +501,8 @@ const App: React.FC = () => {
     setState(s => {
         let nextEvent: GameEvent | null = null;
         if (s.eventResult?.choice.nextEventId) {
-            nextEvent = [...Object.values(PHASE_EVENTS).flat(), ...Object.values(CHAINED_EVENTS), ...Object.values(BASE_EVENTS)].find(e => e.id === s.eventResult?.choice.nextEventId) || null;
+             const allEvents = [...Object.values(PHASE_EVENTS).flat(), ...Object.values(CHAINED_EVENTS), ...Object.values(BASE_EVENTS)];
+             nextEvent = allEvents.find(e => e.id === s.eventResult?.choice.nextEventId) || null;
         }
         if (s.chainedEvent) nextEvent = s.chainedEvent;
 
@@ -393,6 +515,72 @@ const App: React.FC = () => {
         // AUTO-RESUME Logic: Set isPlaying to true after event
         return { ...s, currentEvent: null, eventResult: null, isPlaying: true };
     });
+  };
+
+  const handleClubSelect = (clubId: ClubId) => {
+      setState(prev => ({
+          ...prev,
+          club: clubId,
+          isPlaying: true, // Resume
+          log: [...prev.log, { message: `你加入了${CLUBS.find(c => c.id === clubId)?.name || '无社团'}。`, type: 'success', timestamp: Date.now() }]
+      }));
+      setShowClubSelection(false);
+  };
+
+  const handleWeekendActivityClick = (activity: WeekendActivity) => {
+      // Calculate outcome but don't apply it yet
+      // This is for the "Preview/Result" modal
+      const updates = activity.action(state);
+      const newState = {
+          ...state,
+          ...updates,
+          general: { ...state.general, ...(updates.general || {}) },
+          sleepCount: (state.sleepCount || 0) + (updates.sleepCount as number || 0),
+          // We don't decrement AP yet
+      };
+      if (updates.subjects) newState.subjects = { ...state.subjects, ...updates.subjects };
+      if (updates.oiStats) newState.oiStats = { ...state.oiStats, ...updates.oiStats };
+
+      // Calculate Diff for display
+      const diff: string[] = [];
+      const newG = newState.general;
+      const oldG = state.general;
+      if (Math.floor(newG.mindset) !== Math.floor(oldG.mindset)) diff.push(`心态 ${newG.mindset - oldG.mindset > 0 ? '+' : ''}${Math.floor(newG.mindset - oldG.mindset)}`);
+      if (Math.floor(newG.health) !== Math.floor(oldG.health)) diff.push(`健康 ${newG.health - oldG.health > 0 ? '+' : ''}${Math.floor(newG.health - oldG.health)}`);
+      if (Math.floor(newG.money) !== Math.floor(oldG.money)) diff.push(`金钱 ${newG.money - oldG.money > 0 ? '+' : ''}${Math.floor(newG.money - oldG.money)}`);
+      if (Math.floor(newG.romance) !== Math.floor(oldG.romance)) diff.push(`魅力 ${newG.romance - oldG.romance > 0 ? '+' : ''}${Math.floor(newG.romance - oldG.romance)}`);
+      if (Math.floor(newG.experience) !== Math.floor(oldG.experience)) diff.push(`经验 ${newG.experience - oldG.experience > 0 ? '+' : ''}${Math.floor(newG.experience - oldG.experience)}`);
+      if (updates.oiStats) diff.push("OI能力提升");
+      if (updates.subjects) diff.push("学科能力变动");
+      if (updates.activeStatuses) diff.push("状态更新");
+      
+      const resultText = typeof activity.resultText === 'function' ? activity.resultText(state) : activity.resultText;
+
+      setWeekendResult({
+          activity,
+          diff,
+          resultText,
+          newState
+      });
+  };
+
+  const confirmWeekendActivity = () => {
+      if (!weekendResult) return;
+      
+      setState(prev => {
+          const nextAP = prev.weekendActionPoints - 1;
+          const isFinished = nextAP <= 0;
+          
+          return {
+              ...weekendResult.newState,
+              weekendActionPoints: nextAP,
+              isWeekend: !isFinished,
+              isPlaying: isFinished,
+              weekendProcessed: isFinished,
+              log: [...prev.log, { message: `周末活动：${weekendResult.activity.name}`, type: 'info' as const, timestamp: Date.now() }]
+          };
+      });
+      setWeekendResult(null);
   };
 
   const handleExamFinish = (result: ExamResult) => {
@@ -411,24 +599,36 @@ const App: React.FC = () => {
 
           // Calculate Max Possible Score dynamically based on what was tested
           const subjectsTaken = Object.keys(result.scores);
-          const maxPossible = subjectsTaken.reduce((acc, sub) => {
-              return acc + (['chinese', 'math', 'english'].includes(sub) ? 150 : 100);
-          }, 0);
+          let maxPossible = 0;
+          if (prev.phase === Phase.CSP_EXAM || prev.phase === Phase.NOIP_EXAM) {
+              maxPossible = 400; // OI usually 400
+          } else {
+             maxPossible = subjectsTaken.reduce((acc, sub) => {
+                return acc + (['chinese', 'math', 'english'].includes(sub) ? 150 : 100);
+             }, 0);
+          }
 
-          // Normal Distribution Simulation
-          // Assuming Mean = 70% (0.70), StdDev = 12% (0.12)
-          const ratio = maxPossible > 0 ? result.totalScore / maxPossible : 0;
-          const mean = 0.70;
-          const stdDev = 0.12;
-          const z = (ratio - mean) / stdDev;
-          
-          // CDF Approximation using Logistic function
-          const percentile = 1 / (1 + Math.exp(-1.702 * z));
-          
-          rank = Math.max(1, Math.floor(totalStudents * (1 - percentile)));
+          // UPDATE: Rank calculation optimized
+          if (result.totalScore >= maxPossible) {
+              rank = 1; // Force rank 1 for perfect score
+          } else {
+              // Normal Distribution Simulation with adjusted parameters
+              const ratio = maxPossible > 0 ? result.totalScore / maxPossible : 0;
+              const mean = 0.68; // Slightly lower mean to help player
+              const stdDev = 0.15; // Larger spread
+              const z = (ratio - mean) / stdDev;
+              
+              // CDF Approximation using Logistic function
+              const percentile = 1 / (1 + Math.exp(-1.702 * z));
+              
+              rank = Math.max(1, Math.floor(totalStudents * (1 - percentile)) + 1);
+          }
           
           if (rank === 1) unlockAchievement('top_rank');
           if (rank > totalStudents * 0.98) unlockAchievement('bottom_rank');
+          
+          // Achievement: Sleep God
+          if (prev.sleepCount >= 20 && rank <= 50) unlockAchievement('sleep_god');
 
           // Achievement Check: Nerd (Perfect Score)
           let perfectScore = false;
@@ -457,12 +657,12 @@ const App: React.FC = () => {
               nextPhase = Phase.SUBJECT_RESELECTION;
               logMsg = "期中考试结束，请重新审视你的选科。";
           } else if (prev.phase === Phase.CSP_EXAM) {
-              const award = result.totalScore >= 155 ? "一等奖" : result.totalScore >= 100 ? "二等奖" : "三等奖";
-              popupResult = { title: "CSP-J/S 2025", score: result.totalScore, award };
+              const award = result.totalScore >= 170 ? "一等奖" : result.totalScore >= 140 ? "二等奖" : "三等奖";
+              popupResult = { title: "CSP-J/S 2026", score: result.totalScore, award };
               return { ...prev, popupCompetitionResult: popupResult, examResult: result };
           } else if (prev.phase === Phase.NOIP_EXAM) {
-              const award = result.totalScore >= 145 ? "省一等奖" : result.totalScore >= 115 ? "省二等奖" : "省三等奖";
-              popupResult = { title: "NOIP 2025", score: result.totalScore, award };
+              const award = result.totalScore >= 144 ? "省一等奖" : result.totalScore >= 112 ? "省二等奖" : "省三等奖";
+              popupResult = { title: "NOIP 2026", score: result.totalScore, award };
               if (award === "省一等奖") unlockAchievement('oi_god');
               return { ...prev, popupCompetitionResult: popupResult, examResult: result };
           } else if (prev.phase === Phase.FINAL_EXAM) {
@@ -495,6 +695,18 @@ const App: React.FC = () => {
               log: [...prev.log, { message: "竞赛征程暂时告一段落。", type: 'success', timestamp: Date.now() }]
           };
       });
+  };
+  
+  // Helper to determine Exam Title
+  const getExamTitle = () => {
+      switch(state.phase) {
+          case Phase.PLACEMENT_EXAM: return "分班考试";
+          case Phase.MIDTERM_EXAM: return "期中考试";
+          case Phase.CSP_EXAM: return "CSP-J/S 2026";
+          case Phase.NOIP_EXAM: return "NOIP 2026";
+          case Phase.FINAL_EXAM: return "期末考试";
+          default: return "考试";
+      }
   };
 
   // --- HOME VIEW (Redesigned) ---
@@ -645,17 +857,24 @@ const App: React.FC = () => {
              <button onClick={endGame} className="flex-shrink-0 bg-rose-50 border border-rose-100 px-3 py-2 rounded-xl text-xs font-bold text-rose-600 shadow-sm">结束</button>
         </div>
 
-        <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3 flex-shrink-0">
+        <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3 flex-shrink-0 z-20 relative">
                <div className="flex items-center justify-between">
-                   <div className="flex flex-col gap-1 overflow-hidden">
+                   {/* UPDATE: Removed overflow-hidden to allow tooltips to show */}
+                   <div className="flex flex-col gap-1 w-full mr-4">
                        <h2 className="font-black text-slate-800 text-lg flex items-center gap-2 uppercase tracking-tight truncate">
                             <span className={`w-2 h-2 rounded-full flex-shrink-0 ${state.isSick ? 'bg-red-500 animate-pulse' : 'bg-indigo-500'}`}></span> {state.phase} 
                         </h2>
-                        {/* Status Bar Fix: Explicit Height & Layout */}
-                        <div className="flex gap-2 min-h-[24px] items-center flex-wrap overflow-hidden h-8 md:h-auto">
+                        {/* Status Bar: Added flex-wrap to prevent layout break */}
+                        <div className="flex gap-2 items-center flex-wrap">
                             {state.activeStatuses.length > 0 ? state.activeStatuses.map(s => (
-                                <div key={s.id} className={`flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm whitespace-nowrap ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                                <div key={s.id} className={`group relative flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm cursor-help ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
                                     <i className={`fas ${s.icon}`}></i> {s.name} ({s.duration}w)
+                                    {/* Tooltip: Increased z-index to 60 */}
+                                    <div className="absolute top-full left-0 mt-1 w-48 p-3 bg-slate-800 text-white rounded-xl shadow-2xl z-[60] hidden group-hover:block text-xs font-normal pointer-events-none">
+                                        <div className="font-bold mb-1 text-amber-300">{s.name}</div>
+                                        <div className="mb-2 leading-tight">{s.description}</div>
+                                        <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-700">效果: {s.effectDescription}</div>
+                                    </div>
                                 </div>
                             )) : <span className="text-[10px] text-slate-300 font-medium italic">无特殊状态</span>}
                         </div>
@@ -664,8 +883,8 @@ const App: React.FC = () => {
                    {/* Play/Pause Control */}
                    <button 
                       onClick={() => setState(p => ({ ...p, isPlaying: !p.isPlaying }))} 
-                      disabled={!!state.currentEvent}
-                      className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex-shrink-0 flex items-center justify-center shadow-xl transition-all ${state.currentEvent ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                      disabled={!!state.currentEvent || state.isWeekend || !!weekendResult}
+                      className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex-shrink-0 flex items-center justify-center shadow-xl transition-all ${state.currentEvent || state.isWeekend || weekendResult ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
                    >
                       <i className={`fas ${state.isPlaying ? 'fa-pause' : 'fa-play'} text-xl`}></i>
                    </button>
@@ -679,7 +898,7 @@ const App: React.FC = () => {
         </header>
 
         {/* Log Area */}
-        <div className="flex-1 bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3">
+        <div className="flex-1 bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3 relative">
              {state.log.map((l, i) => (
                 <div key={i} className={`p-3 rounded-xl border-l-4 animate-fadeIn ${l.type === 'event' ? 'bg-indigo-50 border-indigo-400' : l.type === 'success' ? 'bg-emerald-50 border-emerald-400' : l.type === 'error' ? 'bg-rose-50 border-rose-400' : 'bg-slate-50 border-slate-300'}`}>
                    <p className="text-sm font-medium">{l.message}</p>
@@ -687,6 +906,100 @@ const App: React.FC = () => {
              ))}
              <div ref={logEndRef} />
         </div>
+
+        {/* Weekend Modal (Moved OUTSIDE the scrollable log area) */}
+        {state.isWeekend && !weekendResult && (
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-30 flex items-center justify-center p-4 md:p-8 animate-fadeIn">
+               <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-xl w-full border border-slate-200 max-h-[90vh] overflow-y-auto custom-scroll">
+                  <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-black text-slate-800"><i className="fas fa-coffee text-amber-500 mr-2"></i>周末自由活动</h2>
+                      <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-bold text-xs">
+                          剩余行动点: {state.weekendActionPoints}
+                      </div>
+                  </div>
+                  <p className="text-slate-500 mb-6">难得的周末，你想怎么度过？</p>
+                  <div className="space-y-3">
+                     {WEEKEND_ACTIVITIES.map(activity => {
+                         if (activity.condition && !activity.condition(state)) return null;
+                         return (
+                             <button key={activity.id} onClick={() => handleWeekendActivityClick(activity)}
+                                 className="w-full text-left p-4 rounded-2xl bg-slate-50 hover:bg-indigo-600 hover:text-white border border-slate-200 transition-all group flex justify-between items-center"
+                             >
+                                 <div className="flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-lg shadow-sm flex-shrink-0 ${activity.type === 'OI' ? 'bg-indigo-500 group-hover:bg-white group-hover:text-indigo-600' : activity.type === 'LOVE' ? 'bg-rose-500 group-hover:bg-white group-hover:text-rose-600' : 'bg-slate-400 group-hover:bg-white group-hover:text-slate-600'}`}>
+                                        <i className={`fas ${activity.icon}`}></i>
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span className="font-bold text-base">{activity.name}</span>
+                                        <span className="text-[10px] opacity-60 font-normal">{activity.description}</span>
+                                    </div>
+                                 </div>
+                                 <i className="fas fa-chevron-right opacity-0 group-hover:opacity-100 transition-all"></i>
+                             </button>
+                         )
+                     })}
+                  </div>
+               </div>
+            </div>
+        )}
+
+        {/* Weekend Result Modal (Moved OUTSIDE the scrollable log area) */}
+        {weekendResult && (
+             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-40 flex items-center justify-center p-4 animate-fadeIn">
+                 <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-indigo-500">
+                     <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl text-white shadow-lg ${weekendResult.activity.type === 'OI' ? 'bg-indigo-500' : weekendResult.activity.type === 'LOVE' ? 'bg-rose-500' : 'bg-amber-400'}`}>
+                         <i className={`fas ${weekendResult.activity.icon}`}></i>
+                     </div>
+                     <h3 className="text-2xl font-black text-slate-800 mb-2">{weekendResult.activity.name}</h3>
+                     <p className="text-slate-600 mb-6 leading-relaxed text-lg">{weekendResult.resultText}</p>
+                     
+                     {weekendResult.diff.length > 0 && (
+                        <div className="flex flex-wrap justify-center gap-2 mb-8">
+                           {weekendResult.diff.map((d, i) => (
+                             <span key={i} className={`px-3 py-1 rounded-full text-xs font-bold ${d.includes('+') ? 'bg-emerald-50 text-emerald-700' : d.includes('-') ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{d}</span>
+                           ))}
+                        </div>
+                     )}
+
+                     <button onClick={confirmWeekendActivity} className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-black text-lg hover:bg-indigo-700 shadow-xl transition-all">
+                         确定
+                     </button>
+                 </div>
+             </div>
+        )}
+
+        {/* Club Selection Modal */}
+        {showClubSelection && (
+             <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                 <div className="bg-white rounded-3xl p-6 md:p-8 max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+                     <h2 className="text-3xl font-black text-center mb-2">百团大战</h2>
+                     <p className="text-center text-slate-500 mb-6">社团活动将占用你每四周的一个周末行动点。</p>
+                     
+                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto custom-scroll p-2">
+                         {CLUBS.map(club => (
+                             <button key={club.id} onClick={() => handleClubSelect(club.id)}
+                                 className="p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-left flex flex-col gap-2 group"
+                             >
+                                 <div className="flex items-center gap-3">
+                                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                                         <i className={`fas ${club.icon}`}></i>
+                                     </div>
+                                     <span className="font-bold text-lg text-slate-800">{club.name}</span>
+                                 </div>
+                                 <p className="text-xs text-slate-500 leading-relaxed">{club.description}</p>
+                                 <div className="mt-auto pt-2 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded w-fit group-hover:bg-white">
+                                     {club.effectDescription}
+                                 </div>
+                             </button>
+                         ))}
+                         <button onClick={() => handleClubSelect('none')} className="p-4 rounded-2xl border-2 border-slate-100 hover:border-slate-400 hover:bg-slate-50 transition-all text-left flex flex-col justify-center items-center gap-2 text-slate-400">
+                             <span className="font-bold">不参加社团</span>
+                             <span className="text-xs">以此换取更多的自由时间</span>
+                         </button>
+                     </div>
+                 </div>
+             </div>
+        )}
 
         {/* Event Modal Overlay */}
         {state.currentEvent && (
@@ -752,7 +1065,7 @@ const App: React.FC = () => {
         {(state.phase === Phase.PLACEMENT_EXAM || state.phase === Phase.FINAL_EXAM || state.phase === Phase.MIDTERM_EXAM || state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) && (
              <div className="absolute inset-0 z-40 rounded-2xl overflow-hidden">
                  <ExamView 
-                    title={state.phase === Phase.PLACEMENT_EXAM ? "分班考试" : state.phase === Phase.CSP_EXAM ? "CSP 认证" : "期末考试"} 
+                    title={getExamTitle()} 
                     state={state} 
                     onFinish={handleExamFinish} 
                  />

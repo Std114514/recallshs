@@ -22,6 +22,15 @@ export interface SubjectStats {
   level: number;
 }
 
+export interface OIStats {
+  dp: number;     // 动态规划
+  ds: number;     // 数据结构
+  math: number;   // 组合数学
+  string: number; // 字符串
+  graph: number;  // 图论
+  misc: number;   // 思维/杂项
+}
+
 export interface GeneralStats {
   mindset: number;
   experience: number;
@@ -72,6 +81,30 @@ export interface GameStatus {
   effectDescription?: string; // e.g. "学习效率 +20%"
 }
 
+export type ClubId = 'rap' | 'dance' | 'social_science' | 'mun' | 'touhou' | 'astronomy' | 'math_research' | 'ttrpg' | 'literature' | 'otaku' | 'anime' | 'none';
+
+export interface Club {
+    id: ClubId;
+    name: string;
+    description: string;
+    icon: string;
+    effectDescription: string;
+    action: (state: GameState) => Partial<GameState>;
+}
+
+export interface WeekendActivity {
+    id: string;
+    name: string;
+    icon: string;
+    type: 'REST' | 'STUDY' | 'SOCIAL' | 'OI' | 'LOVE';
+    // Description shown in the selection menu
+    description?: string; 
+    // Text shown in the result modal
+    resultText: string | ((state: GameState) => string); 
+    condition?: (state: GameState) => boolean;
+    action: (state: GameState) => Partial<GameState>;
+}
+
 // ------------------------------
 
 export interface GameState {
@@ -83,8 +116,12 @@ export interface GameState {
   totalWeeksInPhase: number;
   subjects: Record<SubjectKey, SubjectStats>;
   general: GeneralStats;
+  oiStats: OIStats; // New OI Stats
+  
   selectedSubjects: SubjectKey[];
   competition: CompetitionType;
+  club: ClubId | null; // New Club State
+  
   romancePartner: string | null;
   className: string; 
   log: GameLogEntry[];
@@ -105,6 +142,14 @@ export interface GameState {
   unlockedAchievements: string[]; // IDs only
   achievementPopup: Achievement | null; // For toast notification
   difficulty: Difficulty;
+  
+  // Weekend System
+  isWeekend: boolean;
+  weekendActionPoints: number;
+  weekendProcessed: boolean; // Flag to prevent infinite weekend loop
+  
+  // Stats for Achievements
+  sleepCount: number;
 }
 
 export interface GameLogEntry {
@@ -146,6 +191,19 @@ export interface ExamResult {
   rank?: number;
   totalStudents?: number;
   comment: string;
+}
+
+export interface OIProblem {
+    name: string;
+    level: number; // 1-10
+    difficulty: {
+        dp: number;
+        ds: number;
+        math: number;
+        string: number;
+        graph: number;
+        misc: number;
+    }
 }
 
 export const SUBJECT_NAMES: Record<SubjectKey, string> = {
