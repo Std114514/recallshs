@@ -21,10 +21,7 @@ const modifyOI = (s: GameState, changes: Partial<OIStats>) => {
 // --- Configs ---
 
 export const CHANGELOG_DATA = [
-    { version: 'v1.3.0', date: '2026-1-6', content: ['新增经济系统：现在可以通过【元旦红包】、兼职或运气事件搞钱了', '修复了【小金库】成就理论上不可达的问题', '新增随机事件：代写作业、捡钱、代刷饭卡', '优化了元旦联欢会的后续剧情'] },
-    { version: 'v1.2.7', date: '2026-1-5', content: ['修复恋爱逻辑BUG：现在必须进入【暗恋】状态后才能触发日常表白事件', '优化争吵逻辑：没有对象时和父母争吵不再扣除魅力值', '调整分手判定：刚开学不会立即触发分手', '增加新的结束页面统计维度'] },
-    { version: 'v1.2.6', date: '2026-1-5', content: ['优化周末界面，不再需要上下翻找', '周末活动UI改为列表式，与普通事件风格统一'] },
-    { version: 'v1.2.5', date: '2026-1-5', content: ['军训时长调整为2周，保证事件触发', '优化【债主上门】触发逻辑，现在更随机', '周末活动UI重构，更符合整体风格', '修复状态栏提示框被遮挡的问题', '优化期末考试排名算法，满分必得第一'] }
+    { version: 'v1.0.0/稳定', date: '2026-1-3', content: ['三月七好可爱', '珂朵莉好可爱', '风堇好可爱', '广告位招租'] }
 ];
 
 export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: string, desc: string, stats: GeneralStats, color: string }> = {
@@ -343,7 +340,7 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
             type: 'positive',
             choices: [
                 { 
-                    text: '欣然前往 (-30金钱)', 
+                    text: '欣然前往', 
                     action: (st) => ({ 
                         general: { ...st.general, money: st.general.money - 30, romance: st.general.romance + 5, mindset: st.general.mindset + 10 },
                         activeStatuses: [...st.activeStatuses, { ...STATUSES['in_love'], duration: 2 }]
@@ -461,8 +458,8 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
                 {
                     text: '接单 (+20金钱)',
                     action: (st) => {
-                         // 20% risk
-                         const caught = Math.random() < 0.2;
+                  
+                         const caught = Math.random() < 0.4;
                          if (caught) {
                              return {
                                  general: { ...st.general, mindset: st.general.mindset - 10, efficiency: st.general.efficiency - 2 },
