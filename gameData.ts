@@ -21,8 +21,10 @@ const modifyOI = (s: GameState, changes: Partial<OIStats>) => {
 // --- Configs ---
 
 export const CHANGELOG_DATA = [
-    { version: 'v1.0.0/稳定版', date: '2026-1-3', content: ['三月七好可爱','修了一万个bug','增加了社团，周末，部分OI剧情','添加了一万个bug'] },
-    { version: 'v0.9.1', date: '2026-1-2', content: ['重构了很多代码','修复了【现实难度】过于简单的问题'] }
+    { version: 'v1.3.0', date: '2026-1-6', content: ['新增经济系统：现在可以通过【元旦红包】、兼职或运气事件搞钱了', '修复了【小金库】成就理论上不可达的问题', '新增随机事件：代写作业、捡钱、代刷饭卡', '优化了元旦联欢会的后续剧情'] },
+    { version: 'v1.2.7', date: '2026-1-5', content: ['修复恋爱逻辑BUG：现在必须进入【暗恋】状态后才能触发日常表白事件', '优化争吵逻辑：没有对象时和父母争吵不再扣除魅力值', '调整分手判定：刚开学不会立即触发分手', '增加新的结束页面统计维度'] },
+    { version: 'v1.2.6', date: '2026-1-5', content: ['优化周末界面，不再需要上下翻找', '周末活动UI改为列表式，与普通事件风格统一'] },
+    { version: 'v1.2.5', date: '2026-1-5', content: ['军训时长调整为2周，保证事件触发', '优化【债主上门】触发逻辑，现在更随机', '周末活动UI重构，更符合整体风格', '修复状态栏提示框被遮挡的问题', '优化期末考试排名算法，满分必得第一'] }
 ];
 
 export const DIFFICULTY_PRESETS: Record<Exclude<Difficulty, 'CUSTOM'>, { label: string, desc: string, stats: GeneralStats, color: string }> = {
@@ -448,10 +450,50 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
                     }) 
                 }
             ]
+        }),
+        // --- NEW MONEY EVENTS ---
+        (s) => ({
+            id: 'evt_homework_service',
+            title: '代写作业',
+            description: '隔壁班的同学想花钱找人代写数学作业。',
+            type: 'neutral',
+            choices: [
+                {
+                    text: '接单 (+20金钱)',
+                    action: (st) => {
+                         // 20% risk
+                         const caught = Math.random() < 0.2;
+                         if (caught) {
+                             return {
+                                 general: { ...st.general, mindset: st.general.mindset - 10, efficiency: st.general.efficiency - 2 },
+                                 log: [...st.log, { message: "惨！被老师发现了，钱没挣到还挨了顿骂。", type: 'error', timestamp: Date.now() }]
+                             }
+                         }
+                         return { general: { ...st.general, money: st.general.money + 20, efficiency: st.general.efficiency - 1 } }
+                    }
+                },
+                { text: '严词拒绝', action: (st) => ({ general: { ...st.general, mindset: st.general.mindset + 2 } }) }
+            ]
+        }),
+        (s) => ({
+            id: 'evt_help_card',
+            title: '忘带饭卡',
+            description: '排队打饭时，前面的同学发现忘带饭卡了，正尴尬地四处张望。',
+            type: 'neutral',
+            choices: [
+                {
+                    text: '帮TA刷一下',
+                    action: (st) => ({
+                        general: { ...st.general, money: st.general.money + 10, romance: st.general.romance + 1 },
+                        log: [...st.log, { message: "同学非常感激，转了你红包还多给了点。", type: 'success', timestamp: Date.now() }]
+                    })
+                },
+                { text: '假装没看见', action: (st) => ({ general: { ...st.general, experience: st.general.experience + 1 } }) }
+            ]
         })
     ];
 
-    // Card loss logic integrated into random selection probability to avoid complex conditions here
+    // Card loss logic integrated into random selection probability
     if (Math.random() < 0.05) {
         return {
             id: 'evt_lost_card',
@@ -461,6 +503,25 @@ export const generateRandomFlavorEvent = (state: GameState): GameEvent => {
             choices: [
                 { text: '借同学的刷', action: (st) => ({ general: { ...st.general, romance: st.general.romance + 2, money: st.general.money - 15 } }) },
                 { text: '补办一张', action: (st) => ({ general: { ...st.general, money: st.general.money - 50, mindset: st.general.mindset - 5 } }) }
+            ]
+        }
+    }
+    
+    // Lucky money drop (Rare)
+    if (state.general.luck > 60 && Math.random() < 0.05) {
+        return {
+            id: 'evt_pickup_money',
+            title: '意外之财',
+            description: '你在操场的草坪上发现了一张50元纸币，周围没有人。',
+            type: 'positive',
+            choices: [
+                {
+                    text: '捡起来 (+50金钱)',
+                    action: (st) => ({
+                        general: { ...st.general, money: st.general.money + 50, luck: st.general.luck - 5 },
+                        log: [...st.log, { message: "运气消耗了一点，但钱包鼓了。", type: 'success', timestamp: Date.now() }]
+                    })
+                }
             ]
         }
     }
@@ -504,6 +565,7 @@ export const NEW_YEAR_GALA_EVENT: GameEvent = {
     choices: [
         { 
             text: '欣赏节目', 
+            nextEventId: 'evt_red_packet', // CHAIN TO RED PACKET
             action: (s) => ({ 
                 general: { ...s.general, mindset: s.general.mindset + 15, romance: s.general.romance + 2 },
                  log: [...s.log, { message: "你度过了一个愉快的下午。", type: 'success', timestamp: Date.now() }]
@@ -511,6 +573,7 @@ export const NEW_YEAR_GALA_EVENT: GameEvent = {
         },
         { 
             text: '趁乱刷题', 
+            nextEventId: 'evt_red_packet', // CHAIN TO RED PACKET
             action: (s) => ({ 
                 subjects: modifySub(s, ['english', 'chinese'], 3),
                 general: { ...s.general, mindset: s.general.mindset - 5, romance: s.general.romance - 5 }
@@ -591,6 +654,32 @@ export const CHAINED_EVENTS: Record<string, GameEvent> = {
         description: '教官在全连队面前表扬了你。',
         type: 'positive',
         choices: [{ text: '倍感光荣', action: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 10, experience: s.general.experience + 5 } }) }]
+    },
+    // New Chained Event: Red Packet
+    'evt_red_packet': {
+        id: 'evt_red_packet',
+        title: '新年红包',
+        description: '过年了，亲戚们最关心的果然还是期中考试的成绩...',
+        type: 'positive',
+        choices: [{
+            text: '收下红包',
+            action: (s) => {
+                let amount = 20;
+                let msg = "成绩平平，长辈勉励了几句。";
+                // High efficiency or high experience implies good grades or good impression
+                if (s.general.efficiency >= 25 || s.general.experience >= 60) {
+                    amount = 80;
+                    msg = "因为表现优异，在这个寒冬你收获颇丰！";
+                } else if (s.general.efficiency >= 15) {
+                    amount = 50;
+                    msg = "表现尚可，拿到了标准的压岁钱。";
+                }
+                return {
+                    general: { ...s.general, money: s.general.money + amount, mindset: s.general.mindset + 5 },
+                    log: [...s.log, { message: `【新年】${msg} 金钱+${amount}`, type: 'success', timestamp: Date.now() }]
+                };
+            }
+        }]
     }
 };
 
