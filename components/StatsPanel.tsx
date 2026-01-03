@@ -35,6 +35,22 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ state }) => {
         </div>
       </div>
 
+       {/* 天赋展示 */}
+       {state.talents.length > 0 && (
+           <div>
+               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                   <i className="fas fa-dna"></i> 天赋
+               </h3>
+               <div className="flex flex-wrap gap-2">
+                   {state.talents.map(t => (
+                       <div key={t.id} className={`px-2 py-1 rounded text-[10px] font-bold border ${t.rarity === 'legendary' ? 'bg-amber-50 border-amber-300 text-amber-700' : t.rarity === 'rare' ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : t.rarity === 'cursed' ? 'bg-slate-800 border-slate-600 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-600'}`} title={t.description}>
+                           {t.name}
+                       </div>
+                   ))}
+               </div>
+           </div>
+       )}
+
       {/* 学科属性 */}
       <div className="flex-1">
         <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
