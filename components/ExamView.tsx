@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { GameState, ExamResult, SubjectKey, SUBJECT_NAMES, Phase } from '../types';
+import { GameState, ExamResult, SubjectKey, SUBJECT_NAMES, Phase, OIProblem, OIStats } from '../types';
+import { OI_PROBLEMS } from '../gameData';
 
 interface ExamViewProps {
   title: string;
@@ -15,10 +16,10 @@ const ExamView: React.FC<ExamViewProps> = ({ title, state, onFinish }) => {
   const [isFinished, setIsFinished] = useState(false);
 
   // Determine which subjects to test based on phase
-  const getSubjectsToTest = (): SubjectKey[] => {
+  const getSubjectsToTest = (): string[] => {
     if (state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) {
-      // For competition, we use 'math' as a proxy for algorithmic ability
-      return ['math'];
+      // Pick 4 random OI problems
+      return ['oi_prob_1', 'oi_prob_2', 'oi_prob_3', 'oi_prob_4'];
     }
     if (state.phase === Phase.PLACEMENT_EXAM || state.phase === Phase.MIDTERM_EXAM || state.phase === Phase.FINAL_EXAM) {
       if (state.selectedSubjects.length === 3) {
@@ -29,48 +30,101 @@ const ExamView: React.FC<ExamViewProps> = ({ title, state, onFinish }) => {
     return Object.keys(state.subjects) as SubjectKey[];
   };
 
-  const subjectsToTest = getSubjectsToTest();
+  const [subjectsToTest] = useState(getSubjectsToTest());
+  const [oiProblems] = useState<OIProblem[]>(() => {
+       if (state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) {
+           // Randomly select 4 distinct problems
+           const shuffled = [...OI_PROBLEMS].sort(() => 0.5 - Math.random());
+           return shuffled.slice(0, 4);
+       }
+       return [];
+  });
 
   useEffect(() => {
     if (examStep < subjectsToTest.length) {
-      const subject = subjectsToTest[examStep];
-      const isMainSubject = ['chinese', 'math', 'english'].includes(subject);
-      const maxScore = isMainSubject ? 150 : 100;
-
+      const subjectKey = subjectsToTest[examStep];
+      const isOI = state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM;
+      
       const timer = setTimeout(() => {
-        const stats = state.subjects[subject];
-        
-        // --- 难度调整 (Difficulty Adjustment) ---
-        // Old: (Apt * 0.4 + Lvl * 2.5) / 100
-        // New: (Apt * 0.3 + Lvl * 2.0) / 100 -> 更难获得高基础分
-        
-        let basePercentage = (stats.aptitude * 0.3 + stats.level * 2.0) / 100;
-        
-        // 竞赛考试保持极高难度，主要依赖等级
-        if (state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) {
-            basePercentage = (stats.level * 2.5) / 100; 
+        let score = 0;
+        let maxScore = 100;
+        let logMsg = '';
+
+        if (isOI) {
+             const prob = oiProblems[examStep];
+             maxScore = 100;
+             const stats = state.oiStats;
+             
+             // Calculate success based on stats vs difficulty
+             // Difficulty is 0-10 roughly, stats are 0-100? No, stats seem to be unbounded but 0-20 range mostly in early game
+             // Let's assume OI stats are scaled similarly to subject levels (1-20+)
+             
+             // Base performance on relevant stat
+             let ability = 0;
+             let required = 0;
+             
+             // Weighted ability based on problem profile
+             if (prob.difficulty.dp > 0) { ability += stats.dp; required += prob.difficulty.dp; }
+             if (prob.difficulty.ds > 0) { ability += stats.ds; required += prob.difficulty.ds; }
+             if (prob.difficulty.math > 0) { ability += stats.math; required += prob.difficulty.math; }
+             if (prob.difficulty.string > 0) { ability += stats.string; required += prob.difficulty.string; }
+             if (prob.difficulty.graph > 0) { ability += stats.graph; required += prob.difficulty.graph; }
+             if (prob.difficulty.misc > 0) { ability += stats.misc; required += prob.difficulty.misc; }
+             
+             // Misc base capability from general intelligence/math
+             ability += state.subjects.math.aptitude * 0.1; 
+             
+             // Difficulty scaling
+             const difficultyFactor = (required * 5); // Rough scaling
+             
+             // Score Calc
+             let ratio = ability / Math.max(1, difficultyFactor);
+             
+             // RNG Factors
+             const luckFactor = (state.general.luck - 50) / 400; // +/- 0.125
+             const mindsetFactor = (state.general.mindset - 50) / 400;
+
+             // Difficulty Mode Modifier
+             let modeMod = 0.7;
+             if (state.difficulty === 'NORMAL') modeMod = 1.0; // Easy to get points
+             if (state.difficulty === 'REALITY') modeMod = 0.45; // Hard
+
+             const finalRatio = (ratio + luckFactor + mindsetFactor) * modeMod;
+             
+             // Clamping for partial points logic
+             // 0-0.3: 0 pts
+             // 0.3-0.6: 10-60 pts
+             // 0.6-0.9: 60-95 pts
+             // >0.9: 100 pts (AK)
+             
+             if (finalRatio >= 0.95) score = 100;
+             else if (finalRatio <= 0.2) score = 0;
+             else score = Math.floor(Math.pow(finalRatio, 0.8) * 100);
+             
+             logMsg = `题目 "${prob.name}" (难度:${prob.level}) 测试结束，获得 ${score} 分。`;
+
         } else {
-             // 普通考试保底机制大幅降低，从 0.4 降至 0.2，防止躺平也能及格
-             basePercentage = Math.max(0.2, basePercentage); 
+            // Standard Exam Logic
+            const subject = subjectKey as SubjectKey;
+            const isMainSubject = ['chinese', 'math', 'english'].includes(subject);
+            maxScore = isMainSubject ? 150 : 100;
+            
+            const stats = state.subjects[subject];
+            let basePercentage = (stats.aptitude * 0.3 + stats.level * 2.0) / 100;
+            basePercentage = Math.max(0.2, basePercentage); 
+
+            const luckFactor = (state.general.luck - 50) / 600; 
+            const mindsetFactor = (state.general.mindset - 50) / 600;
+            const randomVar = 0.95 + Math.random() * 0.15; 
+
+            let finalPercentage = (basePercentage + luckFactor + mindsetFactor) * randomVar;
+            finalPercentage = Math.min(1.0, Math.max(0, finalPercentage));
+            
+            score = Math.floor(finalPercentage * maxScore);
+            logMsg = `${SUBJECT_NAMES[subject]} 考试结束，得分 ${score}/${maxScore}。`;
         }
 
-        const luckFactor = (state.general.luck - 50) / 600; // +/- ~0.08
-        const mindsetFactor = (state.general.mindset - 50) / 600; // +/- ~0.08
-        
-        // 波动范围收窄，避免运气好直接满分
-        const randomVar = 0.95 + Math.random() * 0.15; // 0.95 - 1.1
-
-        let finalPercentage = (basePercentage + luckFactor + mindsetFactor) * randomVar;
-        finalPercentage = Math.min(1.0, Math.max(0, finalPercentage));
-        
-        const score = Math.floor(finalPercentage * maxScore);
-        
-        const isComp = state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM;
-        const logMsg = isComp 
-            ? `题目 ${examStep + 1} 完成，得分 ${score}`
-            : `${SUBJECT_NAMES[subject]} 考试结束，得分 ${score}/${maxScore}。`;
-
-        setCurrentScores(prev => ({ ...prev, [subject]: score }));
+        setCurrentScores(prev => ({ ...prev, [subjectKey]: score }));
         setExamLogs(prev => [...prev, logMsg]);
         setExamStep(prev => prev + 1);
       }, 800);
@@ -78,15 +132,16 @@ const ExamView: React.FC<ExamViewProps> = ({ title, state, onFinish }) => {
     } else if (!isFinished) {
       setIsFinished(true);
     }
-  }, [examStep, state, currentScores, isFinished, subjectsToTest]);
+  }, [examStep, state, currentScores, isFinished, subjectsToTest, oiProblems]);
 
   const handleFinishConfirm = () => {
       const total = Object.values(currentScores).reduce((a: number, b: number) => a + b, 0);
       
       let comment = "继续努力。";
       if (state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) {
-          if (total >= 90) comment = "神乎其技，你就是机房的传说！";
-          else if (total >= 60) comment = "发挥稳定，应该能拿奖。";
+          if (total >= 300) comment = "神乎其技，你就是机房的传说！";
+          else if (total >= 200) comment = "发挥稳定，应该能拿奖。";
+          else if (total >= 100) comment = "有些遗憾，明年再战。";
           else comment = "技不如人，甘拜下风。";
       } else {
           // 普通考试评价
@@ -131,7 +186,9 @@ const ExamView: React.FC<ExamViewProps> = ({ title, state, onFinish }) => {
           <div className="flex gap-4 items-center">
             <span className="text-slate-500">[{new Date().toLocaleTimeString()}]</span>
             <span className="text-white">
-              {state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM ? '正在攻克算法题...' : `正在进行 ${SUBJECT_NAMES[subjectsToTest[examStep]]} 考试...`}
+               {state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM 
+                  ? `正在攻克 ${oiProblems[examStep]?.name || 'Unknown Problem'}...` 
+                  : `正在进行 ${SUBJECT_NAMES[subjectsToTest[examStep] as SubjectKey]} 考试...`}
             </span>
             <span className="w-2 h-2 bg-indigo-500 rounded-full animate-ping"></span>
           </div>
@@ -141,10 +198,10 @@ const ExamView: React.FC<ExamViewProps> = ({ title, state, onFinish }) => {
       <div className="mt-8 grid grid-cols-3 md:grid-cols-6 gap-4 mb-8">
         {subjectsToTest.map((sub, idx) => (
           <div key={sub} className="bg-slate-800 rounded-xl p-3 border border-slate-700">
-            <div className="text-[10px] text-slate-500 uppercase">
-                {state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM ? `PROBLEM ${idx + 1}` : SUBJECT_NAMES[sub]}
+            <div className="text-[10px] text-slate-500 uppercase truncate">
+                {state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM ? oiProblems[idx]?.name : SUBJECT_NAMES[sub as SubjectKey]}
             </div>
-            <div className="text-xl font-bold text-indigo-400">{currentScores[sub] || '--'}</div>
+            <div className="text-xl font-bold text-indigo-400">{currentScores[sub] ?? '--'}</div>
           </div>
         ))}
       </div>
