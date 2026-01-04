@@ -27,7 +27,18 @@ const HomeView: React.FC<HomeViewProps> = ({ selectedDifficulty, onDifficultyCha
                 <i className="fas fa-school text-white text-4xl md:text-5xl"></i>
              </div>
              <h1 className="text-4xl md:text-6xl font-black text-slate-800 mb-2 md:mb-4 tracking-tighter z-10 text-center">八中重开模拟器</h1>
-             <p className="text-slate-400 mb-8 md:mb-10 text-lg md:text-xl font-medium z-10">Made by lg37</p>
+             <p className="text-slate-400 text-lg md:text-xl font-medium z-10">Made by lg37</p>
+             
+             {/* Feedback Link */}
+             <a 
+                href="https://v.wjx.cn/vm/exSyEK0.aspx" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="z-10 mt-2 mb-8 text-xs font-bold text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1.5 border-b border-transparent hover:border-indigo-600 pb-0.5"
+                title="点击跳转问卷星"
+             >
+                <i className="fas fa-comment-dots"></i> 为了保证大家的体验，寒假前将不会做任何调整。如果有更多的想法，欢迎点此处反馈！
+             </a>
 
              {/* Difficulty Selection */}
              <div className="w-full max-w-4xl z-10 mb-8">
