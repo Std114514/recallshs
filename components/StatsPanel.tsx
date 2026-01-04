@@ -14,9 +14,9 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ state, onShowGuide }) => {
   const getFuzzyDesc = (val: number, type: 'general' | 'subject' | 'efficiency') => {
       // 1. Calculate Perceived Value
       // Bias: Mindset < 50 causes underestimation, > 50 causes overestimation
-      const bias = (state.general.mindset - 50) * 0.4; 
+      const bias = (state.general.mindset - 50) * 0.2; 
       // Noise: Low experience causes high variance (uncertainty)
-      const noiseRange = Math.max(5, (100 - state.general.experience) * 0.5);
+      const noiseRange = Math.max(5, (35 - state.general.experience) * 0.5);
       // Deterministic randomness based on value and week to prevent flickering within same week
       const pseudoRandom = Math.sin(state.week * val * 123.45); 
       
