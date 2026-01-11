@@ -643,694 +643,702 @@ const App: React.FC = () => {
             weekendProcessed: false
           };
       });
-  };
-
-  const handleChoice = (choice: any, e?: React.MouseEvent) => {
-    // Haptic
-    if (navigator.vibrate) navigator.vibrate(10);
-    
-    setState(prev => {
-      const updates = choice.action(prev);
-      // Construct temp state for diff calculation
-      const tempState = { ...prev, ...updates };
-      if (updates.general) tempState.general = { ...prev.general, ...updates.general };
-
-      // VISUALS: Calculate Diffs and Spawn Text
-      const diff = calculateAndVisualizeDiff(prev, tempState, e?.clientX || window.innerWidth/2, e?.clientY || window.innerHeight/2);
-      
-      // Fallback diff strings if needed for log, though we use the visualized ones for immediate feedback
-      if (updates.sleepCount) diff.push("睡觉次数+1");
-      if (diff.length === 0) diff.push("无明显变化");
-
-      return { 
-          ...tempState,
-          eventResult: { choice, diff }, 
-          history: [{ 
-              week: prev.week, 
-              phase: prev.phase, 
-              eventTitle: prev.currentEvent?.title || '', 
-              choiceText: choice.text, 
-              resultSummary: diff.join(' | '), 
-              timestamp: Date.now() 
-          }, ...prev.history] 
-      };
-    });
-  };
-
-  const handleEventConfirm = () => {
-    setState(s => {
-        let nextEvent: GameEvent | null = null;
-        if (s.eventResult?.choice.nextEventId) {
-             const allEvents = [...Object.values(PHASE_EVENTS).flat(), ...Object.values(CHAINED_EVENTS), ...Object.values(BASE_EVENTS)];
-             nextEvent = allEvents.find(e => e.id === s.eventResult?.choice.nextEventId) || null;
-        }
-        if (s.chainedEvent) nextEvent = s.chainedEvent;
-
-        if (nextEvent) {
-             return { ...s, currentEvent: nextEvent, chainedEvent: null, eventResult: null, triggeredEvents: [...s.triggeredEvents, nextEvent.id] };
-        }
-        
-        return { ...s, currentEvent: null, eventResult: null, isPlaying: true };
-    });
-  };
-
-  const handleClubSelect = (clubId: ClubId) => {
-      setState(prev => ({
-          ...prev,
-          club: clubId,
-          isPlaying: true, // Resume
-          log: [...prev.log, { message: `你加入了${CLUBS.find(c => c.id === clubId)?.name || '无社团'}。`, type: 'success', timestamp: Date.now() }]
-      }));
-      setShowClubSelection(false);
-  };
-
-  const handleShopPurchase = (item: Item) => {
-      setState(prev => {
-          if (prev.general.money < item.price) {
-              return prev;
-          }
-          const updates = item.effect(prev);
-          const nextGeneral = { ...prev.general, ...updates.general };
-          
-          // Visuals (Simple center screen spawn as shop click event might be complex to pass down easily without more refactor)
-          // Actually, we can use a generic center point
-          spawnFloatingText(`-${item.price} 金钱`, window.innerWidth/2, window.innerHeight/2, 'money');
-          
-          return {
-              ...prev,
-              ...updates,
-              general: nextGeneral,
-              inventory: [...prev.inventory, item.id],
-              log: [...prev.log, { message: `购买了${item.name}，消费${item.price}元。`, type: 'success', timestamp: Date.now() }]
-          };
-      });
-  };
-
-  const handleWeekendActivityClick = (activity: WeekendActivity, e: React.MouseEvent) => {
+    };
+  
+    const handleChoice = (choice: any, e?: React.MouseEvent) => {
       // Haptic
       if (navigator.vibrate) navigator.vibrate(10);
-
-      const updates = activity.action(state);
-      const newState = {
-          ...state,
-          ...updates,
-          general: { ...state.general, ...(updates.general || {}) },
-      };
-      if (updates.subjects) newState.subjects = { ...state.subjects, ...updates.subjects };
-      if (updates.oiStats) newState.oiStats = { ...state.oiStats, ...updates.oiStats };
-
-      // VISUALS
-      const diff = calculateAndVisualizeDiff(state, newState, e.clientX, e.clientY);
-      
-      const resultText = typeof activity.resultText === 'function' ? activity.resultText(state) : activity.resultText;
-
-      setWeekendResult({
-          activity,
-          diff,
-          resultText,
-          newState
-      });
-  };
-
-  const confirmWeekendActivity = () => {
-      if (!weekendResult) return;
       
       setState(prev => {
-          const nextAP = prev.weekendActionPoints - 1;
-          const isFinished = nextAP <= 0;
-          
-          return {
-              ...weekendResult.newState,
-              weekendActionPoints: nextAP,
-              isWeekend: !isFinished,
-              isPlaying: isFinished,
-              weekendProcessed: isFinished,
-              log: [...prev.log, { message: `周末活动：${weekendResult.activity.name}`, type: 'info' as const, timestamp: Date.now() }]
-          };
-      });
-      setWeekendResult(null);
-  };
-
-  const handleExamFinish = (result: ExamResult) => {
-      // ... (Same as before)
-      setState(prev => {
-          let nextPhase = prev.phase;
-          let className = prev.className;
-          let efficiencyMod = 0;
-          let popupResult: CompetitionResultData | null = null;
-          let triggeredEvent = prev.currentEvent;
-          let logMsg = '';
-          let nextTotalWeeks = prev.totalWeeksInPhase;
-          let midtermRank = prev.midtermRank;
-
-          let rank = 0;
-          let totalStudents = 633; 
-
-          const subjectsTaken = Object.keys(result.scores);
-          let maxPossible = 0;
-          if (prev.phase === Phase.CSP_EXAM || prev.phase === Phase.NOIP_EXAM) {
-              maxPossible = 400; 
-          } else {
-             maxPossible = subjectsTaken.reduce((acc, sub) => {
-                return acc + (['chinese', 'math', 'english'].includes(sub) ? 150 : 100);
-             }, 0);
-          }
-
-          if (result.totalScore >= maxPossible) {
-              rank = 1; 
-          } else {
-              const ratio = maxPossible > 0 ? result.totalScore / maxPossible : 0;
-              const mean = 0.68;
-              const stdDev = 0.15;
-              const z = (ratio - mean) / stdDev;
-              const percentile = 1 / (1 + Math.exp(-1.702 * z));
-              rank = Math.max(1, Math.floor(totalStudents * (1 - percentile)) + 1);
-          }
-          
-          if (rank === 1) unlockAchievement('top_rank');
-          if (rank > totalStudents * 0.98) unlockAchievement('bottom_rank');
-          if (prev.sleepCount >= 20 && rank <= 50) unlockAchievement('sleep_god');
-
-          let perfectScore = false;
-          Object.entries(result.scores).forEach(([sub, score]) => {
-              const max = ['chinese', 'math', 'english'].includes(sub) ? 150 : 100;
-              if (score >= max) perfectScore = true;
-          });
-          if (perfectScore) unlockAchievement('nerd');
-
-          let hasFailed = false;
-          Object.entries(result.scores).forEach(([sub, score]) => {
-              const max = ['chinese', 'math', 'english'].includes(sub) ? 150 : 100;
-              if (score / max <= 0.6) hasFailed = true;
-          });
-          if (hasFailed) triggeredEvent = BASE_EVENTS['exam_fail_talk'];
-
-          if (prev.phase === Phase.PLACEMENT_EXAM) {
-              if (result.totalScore > 540) { className = "一类实验班"; efficiencyMod = 4; }
-              else if (result.totalScore > 480) { className = "二类实验班"; efficiencyMod = 2; }
-              else { className = "普通班"; }
-              nextPhase = Phase.SEMESTER_1;
-              nextTotalWeeks = 21;
-              logMsg = `分班考试结束，你被分配到了【${className}】。`;
-
-          } else if (prev.phase === Phase.MIDTERM_EXAM) {
-              nextPhase = Phase.SUBJECT_RESELECTION;
-              midtermRank = rank; // Capture Midterm Rank
-              logMsg = `期中考试结束，年级排名: ${rank}。请重新审视你的选科。`;
-          } else if (prev.phase === Phase.CSP_EXAM) {
-              const award = result.totalScore >= 170 ? "一等奖" : result.totalScore >= 140 ? "二等奖" : "三等奖";
-              popupResult = { title: "CSP-J/S 2026", score: result.totalScore, award };
-              return { ...prev, popupCompetitionResult: popupResult, examResult: result };
-          } else if (prev.phase === Phase.NOIP_EXAM) {
-              const award = result.totalScore >= 144 ? "省一等奖" : result.totalScore >= 112 ? "省二等奖" : "省三等奖";
-              popupResult = { title: "NOIP 2026", score: result.totalScore, award };
-              if (award === "省一等奖") unlockAchievement('oi_god');
-              return { ...prev, popupCompetitionResult: popupResult, examResult: result };
-          } else if (prev.phase === Phase.FINAL_EXAM) {
-              nextPhase = Phase.ENDING;
-          }
-
-          return {
-              ...prev,
-              className,
-              general: { ...prev.general, efficiency: prev.general.efficiency + efficiencyMod },
-              phase: nextPhase,
-              totalWeeksInPhase: nextTotalWeeks,
-              examResult: { ...result, rank, totalStudents },
-              midtermRank, // Store rank
-              currentEvent: triggeredEvent,
-              log: [...prev.log, { message: logMsg || `${prev.phase} 结束。`, type: 'info', timestamp: Date.now() }]
-          };
-      });
-  };
-
-  // ... (closeCompetitionPopup, getExamTitle, getEndingAnalysis, endingData same as before) ...
-  const closeCompetitionPopup = () => {
-      setState(prev => {
-          if (!prev.popupCompetitionResult) return prev;
-          const newHistory = [...prev.competitionResults, prev.popupCompetitionResult];
-          return {
-              ...prev,
-              popupCompetitionResult: null,
-              competitionResults: newHistory,
-              phase: Phase.SEMESTER_1,
-              isPlaying: true, // Resume play after popup
-              log: [...prev.log, { message: "竞赛征程告一段落。", type: 'success', timestamp: Date.now() }]
-          };
-      });
-  };
+        const updates = choice.action(prev);
+        // Construct temp state for diff calculation
+        const tempState = { ...prev, ...updates };
+        if (updates.general) tempState.general = { ...prev.general, ...updates.general };
   
-  const getExamTitle = () => {
-      switch(state.phase) {
-          case Phase.PLACEMENT_EXAM: return "分班考试";
-          case Phase.MIDTERM_EXAM: return "期中考试";
-          case Phase.CSP_EXAM: return "CSP-J/S 2026";
-          case Phase.NOIP_EXAM: return "NOIP 2026";
-          case Phase.FINAL_EXAM: return "期末考试";
-          default: return "考试";
-      }
-  };
-
-  const getEndingAnalysis = () => {
-      const { general, examResult, activeStatuses, sleepCount, competitionResults, competition, unlockedAchievements } = state;
-      let title = "普通高中生";
-      let rank = "B";
-      let comment = "你的高中生活波澜不惊。";
-      let score = 0;
-
-      score += general.mindset + general.health + general.experience + general.luck + general.romance + general.efficiency * 5;
-      score += unlockedAchievements.length * 50;
-
-      if (state.phase === Phase.WITHDRAWAL) {
-          rank = "F";
-          title = "遗憾离场";
-          comment = "虽然这次不得不停下脚步，但健康永远是第一位的。养好身体，未来还有无限可能。";
-      } else {
-          if (competition === 'OI') {
-             const noip = competitionResults.find(r => r.title.includes('NOIP'));
-             if (noip && noip.award.includes('一等奖')) {
-                 rank = "SSS";
-                 title = "OI大神";
-                 comment = "你在信息学竞赛中展现了惊人的天赋！";
-                 score += 1000;
-             } else if (noip && noip.award.includes('二等奖')) {
-                 rank = "A";
-                 title = "竞赛强手";
-                 comment = "虽然离省一仅一步之遥，但你的实力已经超越了绝大多数人。";
-                 score += 500;
-             }
+        // VISUALS: Calculate Diffs and Spawn Text
+        const diff = calculateAndVisualizeDiff(prev, tempState, e?.clientX || window.innerWidth/2, e?.clientY || window.innerHeight/2);
+        
+        // Fallback diff strings if needed for log, though we use the visualized ones for immediate feedback
+        if (updates.sleepCount) diff.push("睡觉次数+1");
+        if (diff.length === 0) diff.push("无明显变化");
+  
+        return { 
+            ...tempState,
+            eventResult: { choice, diff }, 
+            history: [{ 
+                week: prev.week, 
+                phase: prev.phase, 
+                eventTitle: prev.currentEvent?.title || '', 
+                choiceText: choice.text, 
+                resultSummary: diff.join(' | '), 
+                timestamp: Date.now() 
+            }, ...prev.history] 
+        };
+      });
+    };
+  
+    const handleEventConfirm = () => {
+      setState(s => {
+          let nextEvent: GameEvent | null = null;
+          if (s.eventResult?.choice.nextEventId) {
+               const allEvents = [...Object.values(PHASE_EVENTS).flat(), ...Object.values(CHAINED_EVENTS), ...Object.values(BASE_EVENTS)];
+               nextEvent = allEvents.find(e => e.id === s.eventResult?.choice.nextEventId) || null;
           }
-
-          if (examResult?.rank && examResult.rank <= 3) {
-              rank = "SSS";
-              title = "全能卷王";
-              comment = `期末考年级第 ${examResult.rank} 名！你是八中当之无愧的传说，老师口中的“那个学生”。`;
-              score += 1000;
-          } else if (examResult?.rank && examResult.rank <= 50) {
-              if (rank !== "SSS") {
-                  rank = "S";
-                  title = "名校预备";
-                  comment = "成绩优异，只要保持下去，985高校稳稳的。";
-                  score += 600;
-              }
+          if (s.chainedEvent) nextEvent = s.chainedEvent;
+  
+          if (nextEvent) {
+               return { ...s, currentEvent: nextEvent, chainedEvent: null, eventResult: null, triggeredEvents: [...s.triggeredEvents, nextEvent.id] };
           }
-
-          if (general.romance > 90 && state.romancePartner) {
-              title = "现充赢家";
-              comment = `不仅成绩不错，还收获了与 ${state.romancePartner} 的甜蜜爱情，真是让人嫉妒啊。`;
-              score += 300;
-          } else if (general.money < -100) {
-              title = "负债累累";
-              comment = "虽然学业完成了，但你的经济状况令人担忧...";
-          } else if (sleepCount > 20) {
-              title = "八中睡神";
-              comment = `一个学期睡了 ${sleepCount} 次，竟然还能顺利结业，这也是一种天赋。`;
-          }
-      }
-      
-      return { rank, title, comment, score };
-  };
-
-  const endingData = (state.phase === Phase.ENDING || state.phase === Phase.WITHDRAWAL) ? getEndingAnalysis() : null;
-
-  // --- HOME VIEW ---
-  if (view === 'HOME') {
-      return (
-        <HomeView 
-          selectedDifficulty={selectedDifficulty}
-          onDifficultyChange={setSelectedDifficulty}
-          customStats={customStats}
-          onCustomStatsChange={setCustomStats}
-          onStart={prepareGame}
-        />
-      );
-  }
-
-  // --- TALENTS VIEW ---
-  if (view === 'TALENTS') {
-      return (
-          <TalentView 
-            availableTalents={availableTalents}
-            selectedTalents={selectedTalents}
-            talentPoints={talentPoints}
-            onToggleTalent={handleTalentToggle}
-            onConfirm={startGame}
-            onBack={() => setView('HOME')}
+          
+          return { ...s, currentEvent: null, eventResult: null, isPlaying: true };
+      });
+    };
+  
+    const handleClubSelect = (clubId: ClubId) => {
+        setState(prev => ({
+            ...prev,
+            club: clubId,
+            isPlaying: true, // Resume
+            log: [...prev.log, { message: `你加入了${CLUBS.find(c => c.id === clubId)?.name || '无社团'}。`, type: 'success', timestamp: Date.now() }]
+        }));
+        setShowClubSelection(false);
+    };
+  
+    const handleShopPurchase = (item: Item) => {
+        setState(prev => {
+            if (prev.general.money < item.price) {
+                return prev;
+            }
+            const updates = item.effect(prev);
+            const nextGeneral = { ...prev.general, ...updates.general };
+            
+            // Visuals (Simple center screen spawn as shop click event might be complex to pass down easily without more refactor)
+            // Actually, we can use a generic center point
+            spawnFloatingText(`-${item.price} 金钱`, window.innerWidth/2, window.innerHeight/2, 'money');
+            
+            return {
+                ...prev,
+                ...updates,
+                general: nextGeneral,
+                inventory: [...prev.inventory, item.id],
+                log: [...prev.log, { message: `购买了${item.name}，消费${item.price}元。`, type: 'success', timestamp: Date.now() }]
+            };
+        });
+    };
+  
+    const handleWeekendActivityClick = (activity: WeekendActivity, e: React.MouseEvent) => {
+        // Haptic
+        if (navigator.vibrate) navigator.vibrate(10);
+  
+        const updates = activity.action(state);
+        const newState = {
+            ...state,
+            ...updates,
+            general: { ...state.general, ...(updates.general || {}) },
+        };
+        if (updates.subjects) newState.subjects = { ...state.subjects, ...updates.subjects };
+        if (updates.oiStats) newState.oiStats = { ...state.oiStats, ...updates.oiStats };
+  
+        // VISUALS
+        const diff = calculateAndVisualizeDiff(state, newState, e.clientX, e.clientY);
+        
+        const resultText = typeof activity.resultText === 'function' ? activity.resultText(state) : activity.resultText;
+  
+        setWeekendResult({
+            activity,
+            diff,
+            resultText,
+            newState
+        });
+    };
+  
+    const confirmWeekendActivity = () => {
+        if (!weekendResult) return;
+        
+        setState(prev => {
+            const nextAP = prev.weekendActionPoints - 1;
+            const isFinished = nextAP <= 0;
+            
+            return {
+                ...weekendResult.newState,
+                weekendActionPoints: nextAP,
+                isWeekend: !isFinished,
+                isPlaying: isFinished,
+                weekendProcessed: isFinished,
+                log: [...prev.log, { message: `周末活动：${weekendResult.activity.name}`, type: 'info' as const, timestamp: Date.now() }]
+            };
+        });
+        setWeekendResult(null);
+    };
+  
+    const handleExamFinish = (result: ExamResult) => {
+        // ... (Same as before)
+        setState(prev => {
+            let nextPhase = prev.phase;
+            let className = prev.className;
+            let efficiencyMod = 0;
+            let popupResult: CompetitionResultData | null = null;
+            let triggeredEvent = prev.currentEvent;
+            let logMsg = '';
+            let nextTotalWeeks = prev.totalWeeksInPhase;
+            let midtermRank = prev.midtermRank;
+  
+            let rank = 0;
+            let totalStudents = 633; 
+  
+            const subjectsTaken = Object.keys(result.scores);
+            let maxPossible = 0;
+            if (prev.phase === Phase.CSP_EXAM || prev.phase === Phase.NOIP_EXAM) {
+                maxPossible = 400; 
+            } else {
+               maxPossible = subjectsTaken.reduce((acc, sub) => {
+                  return acc + (['chinese', 'math', 'english'].includes(sub) ? 150 : 100);
+               }, 0);
+            }
+  
+            if (result.totalScore >= maxPossible) {
+                rank = 1; 
+            } else {
+                const ratio = maxPossible > 0 ? result.totalScore / maxPossible : 0;
+                const mean = 0.68;
+                const stdDev = 0.15;
+                const z = (ratio - mean) / stdDev;
+                const percentile = 1 / (1 + Math.exp(-1.702 * z));
+                rank = Math.max(1, Math.floor(totalStudents * (1 - percentile)) + 1);
+            }
+            
+            if (rank === 1) unlockAchievement('top_rank');
+            if (rank > totalStudents * 0.98) unlockAchievement('bottom_rank');
+            if (prev.sleepCount >= 20 && rank <= 50) unlockAchievement('sleep_god');
+  
+            let perfectScore = false;
+            Object.entries(result.scores).forEach(([sub, score]) => {
+                const max = ['chinese', 'math', 'english'].includes(sub) ? 150 : 100;
+                if (score >= max) perfectScore = true;
+            });
+            if (perfectScore) unlockAchievement('nerd');
+  
+            let hasFailed = false;
+            Object.entries(result.scores).forEach(([sub, score]) => {
+                const max = ['chinese', 'math', 'english'].includes(sub) ? 150 : 100;
+                if (score / max <= 0.6) hasFailed = true;
+            });
+            if (hasFailed) triggeredEvent = BASE_EVENTS['exam_fail_talk'];
+  
+            if (prev.phase === Phase.PLACEMENT_EXAM) {
+                if (result.totalScore > 540) { className = "一类实验班"; efficiencyMod = 4; }
+                else if (result.totalScore > 480) { className = "二类实验班"; efficiencyMod = 2; }
+                else { className = "普通班"; }
+                nextPhase = Phase.SEMESTER_1;
+                nextTotalWeeks = 21;
+                logMsg = `分班考试结束，你被分配到了【${className}】。`;
+  
+            } else if (prev.phase === Phase.MIDTERM_EXAM) {
+                nextPhase = Phase.SUBJECT_RESELECTION;
+                midtermRank = rank; // Capture Midterm Rank
+                logMsg = `期中考试结束，年级排名: ${rank}。请重新审视你的选科。`;
+            } else if (prev.phase === Phase.CSP_EXAM) {
+                const award = result.totalScore >= 170 ? "一等奖" : result.totalScore >= 140 ? "二等奖" : "三等奖";
+                popupResult = { title: "CSP-J/S 2026", score: result.totalScore, award };
+                return { ...prev, popupCompetitionResult: popupResult, examResult: result };
+            } else if (prev.phase === Phase.NOIP_EXAM) {
+                const award = result.totalScore >= 144 ? "省一等奖" : result.totalScore >= 112 ? "省二等奖" : "省三等奖";
+                popupResult = { title: "NOIP 2026", score: result.totalScore, award };
+                if (award === "省一等奖") unlockAchievement('oi_god');
+                return { ...prev, popupCompetitionResult: popupResult, examResult: result };
+            } else if (prev.phase === Phase.FINAL_EXAM) {
+                nextPhase = Phase.ENDING;
+            }
+  
+            return {
+                ...prev,
+                className,
+                general: { ...prev.general, efficiency: prev.general.efficiency + efficiencyMod },
+                phase: nextPhase,
+                totalWeeksInPhase: nextTotalWeeks,
+                examResult: { ...result, rank, totalStudents, title: result.title }, // Ensure title is saved for logic check
+                midtermRank, // Store rank
+                currentEvent: triggeredEvent,
+                log: [...prev.log, { message: logMsg || `${prev.phase} 结束。`, type: 'info', timestamp: Date.now() }]
+            };
+        });
+    };
+  
+    // ... (closeCompetitionPopup, getExamTitle, getEndingAnalysis, endingData same as before) ...
+    const closeCompetitionPopup = () => {
+        setState(prev => {
+            if (!prev.popupCompetitionResult) return prev;
+            const newHistory = [...prev.competitionResults, prev.popupCompetitionResult];
+            return {
+                ...prev,
+                popupCompetitionResult: null,
+                competitionResults: newHistory,
+                phase: Phase.SEMESTER_1,
+                isPlaying: true, // Resume play after popup
+                log: [...prev.log, { message: "竞赛征程告一段落。", type: 'success', timestamp: Date.now() }]
+            };
+        });
+    };
+    
+    const getExamTitle = () => {
+        switch(state.phase) {
+            case Phase.PLACEMENT_EXAM: return "分班考试";
+            case Phase.MIDTERM_EXAM: return "期中考试";
+            case Phase.CSP_EXAM: return "CSP-J/S 2026";
+            case Phase.NOIP_EXAM: return "NOIP 2026";
+            case Phase.FINAL_EXAM: return "期末考试";
+            default: return "考试";
+        }
+    };
+  
+    const getEndingAnalysis = () => {
+        const { general, examResult, activeStatuses, sleepCount, competitionResults, competition, unlockedAchievements } = state;
+        let title = "普通高中生";
+        let rank = "B";
+        let comment = "你的高中生活波澜不惊。";
+        let score = 0;
+  
+        score += general.mindset + general.health + general.experience + general.luck + general.romance + general.efficiency * 5;
+        score += unlockedAchievements.length * 50;
+  
+        if (state.phase === Phase.WITHDRAWAL) {
+            rank = "F";
+            title = "遗憾离场";
+            comment = "虽然这次不得不停下脚步，但健康永远是第一位的。养好身体，未来还有无限可能。";
+        } else {
+            if (competition === 'OI') {
+               const noip = competitionResults.find(r => r.title.includes('NOIP'));
+               if (noip && noip.award.includes('一等奖')) {
+                   rank = "SSS";
+                   title = "OI大神";
+                   comment = "你在信息学竞赛中展现了惊人的天赋！";
+                   score += 1000;
+               } else if (noip && noip.award.includes('二等奖')) {
+                   rank = "A";
+                   title = "竞赛强手";
+                   comment = "虽然离省一仅一步之遥，但你的实力已经超越了绝大多数人。";
+                   score += 500;
+               }
+            }
+  
+            if (examResult?.rank && examResult.rank <= 3) {
+                rank = "SSS";
+                title = "全能卷王";
+                comment = `期末考年级第 ${examResult.rank} 名！你是八中当之无愧的传说，老师口中的“那个学生”。`;
+                score += 1000;
+            } else if (examResult?.rank && examResult.rank <= 50) {
+                if (rank !== "SSS") {
+                    rank = "S";
+                    title = "名校预备";
+                    comment = "成绩优异，只要保持下去，985高校稳稳的。";
+                    score += 600;
+                }
+            }
+  
+            if (general.romance > 90 && state.romancePartner) {
+                title = "现充赢家";
+                comment = `不仅成绩不错，还收获了与 ${state.romancePartner} 的甜蜜爱情，真是让人嫉妒啊。`;
+                score += 300;
+            } else if (general.money < -100) {
+                title = "负债累累";
+                comment = "虽然学业完成了，但你的经济状况令人担忧...";
+            } else if (sleepCount > 20) {
+                title = "八中睡神";
+                comment = `一个学期睡了 ${sleepCount} 次，竟然还能顺利结业，这也是一种天赋。`;
+            }
+        }
+        
+        return { rank, title, comment, score };
+    };
+  
+    const endingData = (state.phase === Phase.ENDING || state.phase === Phase.WITHDRAWAL) ? getEndingAnalysis() : null;
+  
+    // --- HOME VIEW ---
+    if (view === 'HOME') {
+        return (
+          <HomeView 
+            selectedDifficulty={selectedDifficulty}
+            onDifficultyChange={setSelectedDifficulty}
+            customStats={customStats}
+            onCustomStatsChange={setCustomStats}
+            onStart={prepareGame}
           />
-      )
-  }
-
-  // --- GAME VIEW ---
-  return (
-    <div className="h-[100dvh] bg-slate-100 flex flex-col md:flex-row p-2 md:p-4 gap-2 md:gap-4 overflow-hidden font-sans text-slate-900 relative">
-      {/* SCREEN EFFECTS OVERLAYS */}
-      <div className={`fixed inset-0 pointer-events-none z-[50] transition-all duration-1000 ${state.general.health < 30 ? 'opacity-100' : 'opacity-0'}`}
-           style={{ boxShadow: 'inset 0 0 100px rgba(255, 0, 0, 0.3)' }}></div>
-      <div className={`fixed inset-0 pointer-events-none z-[50] transition-all duration-1000 ${state.general.mindset > 90 ? 'opacity-100' : 'opacity-0'}`}
-           style={{ boxShadow: 'inset 0 0 100px rgba(255, 255, 255, 0.6)', mixBlendMode: 'overlay' }}></div>
-      
-      {/* FLOATING TEXT LAYER */}
-      <FloatingTextLayer items={floatingTexts} />
-
-      {/* Reality Guide Modal */}
-      {showRealityGuide && <RealityGuideModal onClose={() => setShowRealityGuide(false)} />}
-
-      {/* Toast */}
-      {state.achievementPopup && (
-          <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[60] bg-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-fadeIn border border-slate-700">
-              <div className="w-12 h-12 bg-yellow-400 rounded-full flex items-center justify-center text-slate-900 text-xl shadow-lg border-2 border-white"><i className={`fas ${state.achievementPopup.icon}`}></i></div>
-              <div>
-                  <div className="text-[10px] font-bold text-yellow-400 uppercase tracking-widest">Achievement Unlocked</div>
-                  <div className="font-black text-lg">{state.achievementPopup.title}</div>
-              </div>
-          </div>
-      )}
-
-      {/* Sidebar: Stacked on mobile, Side on desktop */}
-      <aside className="w-full md:w-80 flex-shrink-0 flex flex-col gap-2 md:gap-4 max-h-[30vh] md:max-h-full overflow-y-auto md:overflow-visible">
-          <StatsPanel state={state} onShowGuide={() => setShowRealityGuide(true)} />
-          <div className="hidden md:grid grid-cols-2 gap-2">
-            <button onClick={() => setShowShop(true)} className="bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600">
-                 <i className="fas fa-store text-emerald-500 mb-1"></i><span className="text-xs">小卖部</span>
-            </button>
-            <button onClick={() => setShowHistory(true)} className="bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600">
-              <i className="fas fa-archive text-indigo-500 mb-1"></i><span className="text-xs">历程</span>
-            </button>
-            <button onClick={() => setShowAchievements(true)} className="col-span-2 bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600 relative">
-                 <i className="fas fa-trophy text-yellow-500 mb-1"></i><span className="text-xs">成就</span>
-                 <span className="absolute top-2 right-2 bg-slate-100 text-[9px] px-1.5 rounded-full">{state.unlockedAchievements.length}</span>
-            </button>
-            <button onClick={endGame} className="col-span-2 bg-rose-100 hover:bg-rose-200 p-2 rounded-xl text-xs font-bold text-rose-600 transition-colors">提前退休（结束游戏）</button>
-          </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col gap-2 md:gap-4 relative h-full overflow-hidden">
-        {/* Mobile-only Controls Toolbar */}
-        <div className="flex md:hidden gap-2 overflow-x-auto pb-1 flex-shrink-0">
-             <button onClick={() => setShowShop(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-store text-emerald-500 mr-1"></i>小卖部</button>
-             <button onClick={() => setShowAchievements(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-trophy text-yellow-500 mr-1"></i>成就</button>
-             <button onClick={() => setShowHistory(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-archive text-indigo-500 mr-1"></i>历程</button>
-             <button onClick={endGame} className="flex-shrink-0 bg-rose-50 border border-rose-100 px-3 py-2 rounded-xl text-xs font-bold text-rose-600 shadow-sm">结束</button>
-        </div>
-
-        <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3 flex-shrink-0 z-20 relative">
-               <div className="flex items-center justify-between">
-                   <div className="flex flex-col gap-1 w-full mr-4">
-                       <h2 className="font-black text-slate-800 text-lg flex items-center gap-2 uppercase tracking-tight truncate">
-                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${state.isSick ? 'bg-red-500 animate-pulse' : 'bg-indigo-500'}`}></span> {state.phase} 
-                        </h2>
-                        <div className="flex gap-2 items-center flex-wrap">
-                            {state.activeStatuses.length > 0 ? state.activeStatuses.map(s => (
-                                <div key={s.id} className={`group relative flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm cursor-help ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
-                                    <i className={`fas ${s.icon}`}></i> {s.name} ({s.duration}w)
-                                    <div className="absolute top-full left-0 mt-1 w-48 p-3 bg-slate-800 text-white rounded-xl shadow-2xl z-[60] hidden group-hover:block text-xs font-normal pointer-events-none">
-                                        <div className="font-bold mb-1 text-amber-300">{s.name}</div>
-                                        <div className="mb-2 leading-tight">{s.description}</div>
-                                        <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-700">效果: {s.effectDescription}</div>
-                                    </div>
-                                </div>
-                            )) : <span className="text-[10px] text-slate-300 font-medium italic">无特殊状态</span>}
-                            {/* Talents in Header */}
-                            {state.talents.map(t => (
-                                <div key={t.id} className="group relative flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm cursor-help bg-purple-50 border-purple-200 text-purple-700">
-                                     <i className="fas fa-star"></i> {t.name}
-                                     <div className="absolute top-full left-0 mt-1 w-48 p-3 bg-slate-800 text-white rounded-xl shadow-2xl z-[60] hidden group-hover:block text-xs font-normal pointer-events-none">
-                                        <div className="font-bold mb-1 text-amber-300">{t.name}</div>
-                                        <div className="mb-2 leading-tight">{t.description}</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                   </div>
-                   
-                   {/* Play/Pause Control */}
-                   <button 
-                      onClick={() => setState(p => ({ ...p, isPlaying: !p.isPlaying }))} 
-                      disabled={!!state.currentEvent || state.isWeekend || !!weekendResult}
-                      className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex-shrink-0 flex items-center justify-center shadow-xl transition-all ${state.currentEvent || state.isWeekend || weekendResult ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-                   >
-                      <i className={`fas ${state.isPlaying ? 'fa-pause' : 'fa-play'} text-xl`}></i>
-                   </button>
-               </div>
-               <div className="flex items-center gap-2 w-full">
-                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                       <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${calculateProgress(state)}%` }}></div>
-                    </div>
-                    <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">Week {state.week}/{state.totalWeeksInPhase || '-'}</span>
-               </div>
-        </header>
-
-        {/* Log Area */}
-        <div className="flex-1 bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3 relative">
-             {state.log.map((l, i) => (
-                <div key={i} className={`p-3 rounded-xl border-l-4 animate-fadeIn ${l.type === 'event' ? 'bg-indigo-50 border-indigo-400' : l.type === 'success' ? 'bg-emerald-50 border-emerald-400' : l.type === 'error' ? 'bg-rose-50 border-rose-400' : 'bg-slate-50 border-slate-300'}`}>
-                   <p className="text-sm font-medium">{l.message}</p>
+        );
+    }
+  
+    // --- TALENTS VIEW ---
+    if (view === 'TALENTS') {
+        return (
+            <TalentView 
+              availableTalents={availableTalents}
+              selectedTalents={selectedTalents}
+              talentPoints={talentPoints}
+              onToggleTalent={handleTalentToggle}
+              onConfirm={startGame}
+              onBack={() => setView('HOME')}
+            />
+        )
+    }
+  
+    // --- GAME VIEW ---
+    return (
+      <div className="h-[100dvh] bg-slate-100 flex flex-col md:flex-row p-2 md:p-4 gap-2 md:gap-4 overflow-hidden font-sans text-slate-900 relative">
+        {/* SCREEN EFFECTS OVERLAYS */}
+        <div className={`fixed inset-0 pointer-events-none z-[50] transition-all duration-1000 ${state.general.health < 30 ? 'opacity-100' : 'opacity-0'}`}
+             style={{ boxShadow: 'inset 0 0 100px rgba(255, 0, 0, 0.3)' }}></div>
+        <div className={`fixed inset-0 pointer-events-none z-[50] transition-all duration-1000 ${state.general.mindset > 90 ? 'opacity-100' : 'opacity-0'}`}
+             style={{ boxShadow: 'inset 0 0 100px rgba(255, 255, 255, 0.6)', mixBlendMode: 'overlay' }}></div>
+        
+        {/* FLOATING TEXT LAYER */}
+        <FloatingTextLayer items={floatingTexts} />
+  
+        {/* Reality Guide Modal */}
+        {showRealityGuide && <RealityGuideModal onClose={() => setShowRealityGuide(false)} />}
+  
+        {/* Toast */}
+        {state.achievementPopup && (
+            <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[60] bg-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-fadeIn border border-slate-700">
+                <div className="w-12 h-12 bg-yellow-400 rounded-full flex items-center justify-center text-slate-900 text-xl shadow-lg border-2 border-white"><i className={`fas ${state.achievementPopup.icon}`}></i></div>
+                <div>
+                    <div className="text-[10px] font-bold text-yellow-400 uppercase tracking-widest">Achievement Unlocked</div>
+                    <div className="font-black text-lg">{state.achievementPopup.title}</div>
                 </div>
-             ))}
-             <div ref={logEndRef} />
-        </div>
-
-        {/* Weekend Modal */}
-        {state.isWeekend && !weekendResult && (
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-30 flex items-center justify-center p-4 md:p-8 animate-fadeIn">
-               <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-xl w-full border border-slate-200 max-h-[90vh] overflow-y-auto custom-scroll">
-                  <div className="flex justify-between items-center mb-6">
-                      <h2 className="text-2xl font-black text-slate-800"><i className="fas fa-coffee text-amber-500 mr-2"></i>周末自由活动</h2>
-                      <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-bold text-xs">
-                          剩余行动点: {state.weekendActionPoints}
-                      </div>
-                  </div>
-                  <p className="text-slate-500 mb-6">难得的周末，你想怎么度过？{state.difficulty === 'REALITY' && <span className="text-rose-500 text-xs ml-2 font-bold">(现实模式下部分活动受状态限制)</span>}</p>
-                  <div className="space-y-3">
-                     {weekendOptions.map(activity => {
-                         // Condition check is handled in useMemo, but we double check here just in case logic changes
-                         if (activity.condition && !activity.condition(state)) return null;
-                         return (
-                             <button key={activity.id} onClick={(e) => handleWeekendActivityClick(activity, e)}
-                                 className="w-full text-left p-4 rounded-2xl bg-slate-50 hover:bg-indigo-600 hover:text-white border border-slate-200 transition-all group flex justify-between items-center active:scale-95"
-                             >
-                                 <div className="flex items-center gap-3">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-lg shadow-sm flex-shrink-0 ${activity.type === 'OI' ? 'bg-indigo-500 group-hover:bg-white group-hover:text-indigo-600' : activity.type === 'LOVE' ? 'bg-rose-500 group-hover:bg-white group-hover:text-rose-600' : 'bg-slate-400 group-hover:bg-white group-hover:text-slate-600'}`}>
-                                        <i className={`fas ${activity.icon}`}></i>
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span className="font-bold text-base">{activity.name}</span>
-                                        <span className="text-[10px] opacity-60 font-normal">{activity.description}</span>
-                                    </div>
-                                 </div>
-                                 <i className="fas fa-chevron-right opacity-0 group-hover:opacity-100 transition-all"></i>
-                             </button>
-                         )
-                     })}
-                  </div>
-               </div>
             </div>
         )}
-
-        {/* Weekend Result Modal */}
-        {weekendResult && (
-             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-40 flex items-center justify-center p-4 animate-fadeIn">
-                 <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-indigo-500">
-                     <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl text-white shadow-lg ${weekendResult.activity.type === 'OI' ? 'bg-indigo-500' : weekendResult.activity.type === 'LOVE' ? 'bg-rose-500' : 'bg-amber-400'}`}>
-                         <i className={`fas ${weekendResult.activity.icon}`}></i>
+  
+        {/* Sidebar: Stacked on mobile, Side on desktop */}
+        <aside className="w-full md:w-80 flex-shrink-0 flex flex-col gap-2 md:gap-4 max-h-[30vh] md:max-h-full overflow-y-auto md:overflow-visible">
+            <StatsPanel state={state} onShowGuide={() => setShowRealityGuide(true)} />
+            <div className="hidden md:grid grid-cols-2 gap-2">
+              <button onClick={() => setShowShop(true)} className="bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600">
+                   <i className="fas fa-store text-emerald-500 mb-1"></i><span className="text-xs">小卖部</span>
+              </button>
+              <button onClick={() => setShowHistory(true)} className="bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600">
+                <i className="fas fa-archive text-indigo-500 mb-1"></i><span className="text-xs">历程</span>
+              </button>
+              <button onClick={() => setShowAchievements(true)} className="col-span-2 bg-white border border-slate-200 p-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center font-bold text-slate-600 relative">
+                   <i className="fas fa-trophy text-yellow-500 mb-1"></i><span className="text-xs">成就</span>
+                   <span className="absolute top-2 right-2 bg-slate-100 text-[9px] px-1.5 rounded-full">{state.unlockedAchievements.length}</span>
+              </button>
+              <button onClick={endGame} className="col-span-2 bg-rose-100 hover:bg-rose-200 p-2 rounded-xl text-xs font-bold text-rose-600 transition-colors">提前退休（结束游戏）</button>
+            </div>
+        </aside>
+  
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col gap-2 md:gap-4 relative h-full overflow-hidden">
+          {/* Mobile-only Controls Toolbar */}
+          <div className="flex md:hidden gap-2 overflow-x-auto pb-1 flex-shrink-0">
+               <button onClick={() => setShowShop(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-store text-emerald-500 mr-1"></i>小卖部</button>
+               <button onClick={() => setShowAchievements(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-trophy text-yellow-500 mr-1"></i>成就</button>
+               <button onClick={() => setShowHistory(true)} className="flex-shrink-0 bg-white border px-3 py-2 rounded-xl text-xs font-bold shadow-sm"><i className="fas fa-archive text-indigo-500 mr-1"></i>历程</button>
+               <button onClick={endGame} className="flex-shrink-0 bg-rose-50 border border-rose-100 px-3 py-2 rounded-xl text-xs font-bold text-rose-600 shadow-sm">结束</button>
+          </div>
+  
+          <header className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-3 flex-shrink-0 z-20 relative">
+                 <div className="flex items-center justify-between">
+                     <div className="flex flex-col gap-1 w-full mr-4">
+                         <h2 className="font-black text-slate-800 text-lg flex items-center gap-2 uppercase tracking-tight truncate">
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${state.isSick ? 'bg-red-500 animate-pulse' : 'bg-indigo-500'}`}></span> {state.phase} 
+                          </h2>
+                          <div className="flex gap-2 items-center flex-wrap">
+                              {state.activeStatuses.length > 0 ? state.activeStatuses.map(s => (
+                                  <div key={s.id} className={`group relative flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm cursor-help ${s.type === 'BUFF' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : s.type === 'DEBUFF' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                                      <i className={`fas ${s.icon}`}></i> {s.name} ({s.duration}w)
+                                      <div className="absolute top-full left-0 mt-1 w-48 p-3 bg-slate-800 text-white rounded-xl shadow-2xl z-[60] hidden group-hover:block text-xs font-normal pointer-events-none">
+                                          <div className="font-bold mb-1 text-amber-300">{s.name}</div>
+                                          <div className="mb-2 leading-tight">{s.description}</div>
+                                          <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-700">效果: {s.effectDescription}</div>
+                                      </div>
+                                  </div>
+                              )) : <span className="text-[10px] text-slate-300 font-medium italic">无特殊状态</span>}
+                              {/* Talents in Header */}
+                              {state.talents.map(t => (
+                                  <div key={t.id} className="group relative flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-bold shadow-sm cursor-help bg-purple-50 border-purple-200 text-purple-700">
+                                       <i className="fas fa-star"></i> {t.name}
+                                       <div className="absolute top-full left-0 mt-1 w-48 p-3 bg-slate-800 text-white rounded-xl shadow-2xl z-[60] hidden group-hover:block text-xs font-normal pointer-events-none">
+                                          <div className="font-bold mb-1 text-amber-300">{t.name}</div>
+                                          <div className="mb-2 leading-tight">{t.description}</div>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
                      </div>
-                     <h3 className="text-2xl font-black text-slate-800 mb-2">{weekendResult.activity.name}</h3>
-                     <p className="text-slate-600 mb-6 leading-relaxed text-lg">{weekendResult.resultText}</p>
                      
-                     {weekendResult.diff.length > 0 && (
-                        <div className="flex flex-wrap justify-center gap-2 mb-8">
-                           {weekendResult.diff.map((d, i) => (
-                             <span key={i} className={`px-3 py-1 rounded-full text-xs font-bold ${d.includes('+') ? 'bg-emerald-50 text-emerald-700' : d.includes('-') ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{d}</span>
-                           ))}
-                        </div>
-                     )}
-
-                     <button onClick={confirmWeekendActivity} className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-black text-lg hover:bg-indigo-700 shadow-xl transition-all active:scale-95">
-                         确定
+                     {/* Play/Pause Control */}
+                     <button 
+                        onClick={() => setState(p => ({ ...p, isPlaying: !p.isPlaying }))} 
+                        disabled={!!state.currentEvent || state.isWeekend || !!weekendResult}
+                        className={`w-14 h-14 md:w-16 md:h-16 rounded-full flex-shrink-0 flex items-center justify-center shadow-xl transition-all ${state.currentEvent || state.isWeekend || weekendResult ? 'bg-slate-100 text-slate-300' : state.isPlaying ? 'bg-amber-400 text-white hover:bg-amber-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                     >
+                        <i className={`fas ${state.isPlaying ? 'fa-pause' : 'fa-play'} text-xl`}></i>
                      </button>
                  </div>
-             </div>
-        )}
-
-        {/* Club Selection Modal */}
-        {showClubSelection && (
-             <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                 <div className="bg-white rounded-3xl p-6 md:p-8 max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl">
-                     <h2 className="text-3xl font-black text-center mb-2">百团大战</h2>
-                     <p className="text-center text-slate-500 mb-6">社团活动将占用你每四周的一个周末行动点。</p>
-                     
-                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto custom-scroll p-2">
-                         {CLUBS.map(club => (
-                             <button key={club.id} onClick={() => handleClubSelect(club.id)}
-                                 className="p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-left flex flex-col gap-2 group active:scale-95"
-                             >
-                                 <div className="flex items-center gap-3">
-                                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                                         <i className={`fas ${club.icon}`}></i>
-                                     </div>
-                                     <span className="font-bold text-lg text-slate-800">{club.name}</span>
-                                 </div>
-                                 <p className="text-xs text-slate-500 leading-relaxed">{club.description}</p>
-                                 <div className="mt-auto pt-2 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded w-fit group-hover:bg-white">
-                                     {club.effectDescription}
-                                 </div>
-                             </button>
-                         ))}
-                         <button onClick={() => handleClubSelect('none')} className="p-4 rounded-2xl border-2 border-slate-100 hover:border-slate-400 hover:bg-slate-50 transition-all text-left flex flex-col justify-center items-center gap-2 text-slate-400 active:scale-95">
-                             <span className="font-bold">不参加社团</span>
-                             <span className="text-xs">以此换取更多的自由时间</span>
-                         </button>
-                     </div>
+                 <div className="flex items-center gap-2 w-full">
+                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                         <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${calculateProgress(state)}%` }}></div>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">Week {state.week}/{state.totalWeeksInPhase || '-'}</span>
                  </div>
-             </div>
-        )}
-
-        {/* Shop Modal */}
-        {showShop && (
-             <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn" onClick={() => setShowShop(false)}>
-                 <div className="bg-white rounded-3xl p-6 md:p-8 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-                     <div className="flex justify-between items-center mb-6">
-                         <div>
-                            <h2 className="text-2xl font-black text-slate-800">八中小卖部</h2>
-                            <p className="text-sm text-slate-500">持有金钱: <span className="text-yellow-600 font-bold">{state.general.money}</span></p>
-                         </div>
-                         <button onClick={() => setShowShop(false)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"><i className="fas fa-times"></i></button>
-                     </div>
-                     
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-y-auto custom-scroll p-1">
-                         {SHOP_ITEMS.map(item => (
-                             <button 
-                                key={item.id} 
-                                onClick={() => handleShopPurchase(item)}
-                                disabled={state.general.money < item.price}
-                                className="p-4 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-left flex items-center gap-4 group disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
-                             >
-                                 <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-white group-hover:text-indigo-600 transition-colors">
-                                     <i className={`fas ${item.icon} text-xl`}></i>
-                                 </div>
-                                 <div className="flex-1">
-                                     <div className="flex justify-between items-center">
-                                         <span className="font-bold text-slate-800">{item.name}</span>
-                                         <span className="text-sm font-bold text-yellow-600">{item.price} G</span>
-                                     </div>
-                                     <p className="text-xs text-slate-400 mt-1">{item.description}</p>
-                                 </div>
-                             </button>
-                         ))}
-                     </div>
-                 </div>
-             </div>
-        )}
-
-        {/* Event Modal Overlay */}
-        {state.currentEvent && (
-            <EventModal 
-                event={state.currentEvent}
-                state={state}
-                eventResult={state.eventResult}
-                onChoice={handleChoice}
-                onConfirm={handleEventConfirm}
-            />
-        )}
-        
-        {/* Exams / Selection / Endings */}
-        {(state.phase === Phase.SELECTION || state.phase === Phase.SUBJECT_RESELECTION) && (
-            <div className="absolute inset-0 bg-white/95 z-30 p-4 md:p-10 flex flex-col items-center justify-center rounded-2xl">
-               <h2 className="text-3xl font-black mb-4">高一选科</h2>
-               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-10 w-full max-w-lg">
-                  {(['physics', 'chemistry', 'biology', 'history', 'geography', 'politics'] as SubjectKey[]).map(s => (
-                    <button key={s} onClick={() => setState(prev => ({ ...prev, selectedSubjects: prev.selectedSubjects.includes(s) ? prev.selectedSubjects.filter(x => x !== s) : (prev.selectedSubjects.length < 3 ? [...prev.selectedSubjects, s] : prev.selectedSubjects) }))}
-                      className={`p-4 rounded-2xl border-2 transition-all font-bold ${state.selectedSubjects.includes(s) ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
-                      {SUBJECT_NAMES[s]}
-                    </button>
-                  ))}
-               </div>
-               <button disabled={state.selectedSubjects.length !== 3} onClick={() => setState(prev => ({ ...prev, phase: prev.phase === Phase.SELECTION ? Phase.PLACEMENT_EXAM : Phase.SEMESTER_1 }))} className="bg-indigo-600 disabled:bg-slate-200 text-white px-12 py-4 rounded-2xl font-black text-xl shadow-xl">确认选择</button>
-            </div>
-        )}
-        
-        {(state.phase === Phase.PLACEMENT_EXAM || state.phase === Phase.FINAL_EXAM || state.phase === Phase.MIDTERM_EXAM || state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) && (
-             <div className="absolute inset-0 z-40 rounded-2xl overflow-hidden">
-                 <ExamView 
-                    title={getExamTitle()} 
-                    state={state} 
-                    onFinish={handleExamFinish} 
-                 />
-             </div>
-        )}
-
-        {/* Final Settlement Overlay - IMPROVED UI */}
-        {(state.phase === Phase.ENDING || state.phase === Phase.WITHDRAWAL) && endingData && (
-            <EndingScreen 
-                state={state}
-                endingData={endingData}
-                onRestart={() => setView('HOME')}
-                onViewHistory={() => setShowHistory(true)}
-            />
-        )}
-
-        {state.popupCompetitionResult && (
-             <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn p-4">
-                <div className="bg-white rounded-[40px] p-8 md:p-12 text-center max-w-lg w-full shadow-2xl relative border-4 border-yellow-400">
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 bg-yellow-400 rounded-full flex items-center justify-center shadow-lg border-4 border-white"><i className="fas fa-trophy text-white text-4xl"></i></div>
-                    <h3 className="text-2xl md:text-3xl font-black text-slate-800 mt-6 mb-2">{state.popupCompetitionResult.title}</h3>
-                    <div className="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
-                        <div className="text-4xl font-black text-indigo-600 mb-2">{state.popupCompetitionResult.score} pts</div>
-                        <div className="text-2xl font-bold text-yellow-600">{state.popupCompetitionResult.award}</div>
-                    </div>
-                    <button onClick={closeCompetitionPopup} className="bg-indigo-600 text-white px-12 py-4 rounded-2xl font-black text-xl hover:bg-indigo-700 shadow-xl w-full">收入囊中</button>
-                </div>
-             </div>
-        )}
-
-        {showAchievements && (
-             <div className="absolute inset-0 z-[60] flex justify-center items-center bg-slate-900/50 backdrop-blur-sm animate-fadeIn p-4" onClick={() => setShowAchievements(false)}>
-                <div className="bg-white rounded-[40px] p-6 md:p-8 max-w-4xl w-full h-3/4 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+          </header>
+  
+          {/* Log Area */}
+          <div className="flex-1 bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200 overflow-y-auto custom-scroll space-y-3 relative">
+               {state.log.map((l, i) => (
+                  <div key={i} className={`p-3 rounded-xl border-l-4 animate-fadeIn ${l.type === 'event' ? 'bg-indigo-50 border-indigo-400' : l.type === 'success' ? 'bg-emerald-50 border-emerald-400' : l.type === 'error' ? 'bg-rose-50 border-rose-400' : 'bg-slate-50 border-slate-300'}`}>
+                     <p className="text-sm font-medium">{l.message}</p>
+                  </div>
+               ))}
+               <div ref={logEndRef} />
+          </div>
+  
+          {/* Weekend Modal */}
+          {state.isWeekend && !weekendResult && (
+              <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-30 flex items-center justify-center p-4 md:p-8 animate-fadeIn">
+                 <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 max-w-xl w-full border border-slate-200 max-h-[90vh] overflow-y-auto custom-scroll">
                     <div className="flex justify-between items-center mb-6">
-                         <div>
-                            <h2 className="text-3xl font-black text-slate-800">成就墙</h2>
-                            {state.difficulty !== 'REALITY' && <p className="text-xs text-rose-500 font-bold mt-1">当前难度无法解锁新成就</p>}
-                         </div>
-                         <button onClick={() => setShowAchievements(false)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"><i className="fas fa-times"></i></button>
+                        <h2 className="text-2xl font-black text-slate-800"><i className="fas fa-coffee text-amber-500 mr-2"></i>周末自由活动</h2>
+                        <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-bold text-xs">
+                            剩余行动点: {state.weekendActionPoints}
+                        </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {Object.values(ACHIEVEMENTS).map(ach => (
-                            <div key={ach.id} className={`p-4 rounded-2xl border flex items-center gap-4 ${state.unlockedAchievements.includes(ach.id) ? 'bg-indigo-50 border-indigo-200' : 'opacity-50 grayscale'}`}>
-                                <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow flex-shrink-0"><i className={`fas ${ach.icon} text-indigo-500`}></i></div>
-                                <div><h4 className="font-bold text-sm md:text-base">{ach.title}</h4><p className="text-[10px] md:text-xs text-slate-500">{ach.description}</p></div>
-                            </div>
-                        ))}
+                    <p className="text-slate-500 mb-6">难得的周末，你想怎么度过？{state.difficulty === 'REALITY' && <span className="text-rose-500 text-xs ml-2 font-bold">(现实模式下部分活动受状态限制)</span>}</p>
+                    <div className="space-y-3">
+                       {weekendOptions.map(activity => {
+                           // Condition check is handled in useMemo, but we double check here just in case logic changes
+                           if (activity.condition && !activity.condition(state)) return null;
+                           return (
+                               <button key={activity.id} onClick={(e) => handleWeekendActivityClick(activity, e)}
+                                   className="w-full text-left p-4 rounded-2xl bg-slate-50 hover:bg-indigo-600 hover:text-white border border-slate-200 transition-all group flex justify-between items-center active:scale-95"
+                               >
+                                   <div className="flex items-center gap-3">
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-lg shadow-sm flex-shrink-0 ${activity.type === 'OI' ? 'bg-indigo-500 group-hover:bg-white group-hover:text-indigo-600' : activity.type === 'LOVE' ? 'bg-rose-500 group-hover:bg-white group-hover:text-rose-600' : 'bg-slate-400 group-hover:bg-white group-hover:text-slate-600'}`}>
+                                          <i className={`fas ${activity.icon}`}></i>
+                                      </div>
+                                      <div className="flex flex-col">
+                                          <span className="font-bold text-base">{activity.name}</span>
+                                          <span className="text-[10px] opacity-60 font-normal">{activity.description}</span>
+                                      </div>
+                                   </div>
+                                   <i className="fas fa-chevron-right opacity-0 group-hover:opacity-100 transition-all"></i>
+                               </button>
+                           )
+                       })}
                     </div>
-                </div>
-             </div>
-        )}
-
-        {showHistory && (
-             <div className="absolute inset-0 z-[60] flex justify-end bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={() => setShowHistory(false)}>
-                <div className="w-full md:w-96 bg-white h-full shadow-2xl p-6 md:p-8 flex flex-col animate-slideInRight" onClick={e => e.stopPropagation()}>
-                   <div className="flex justify-between items-center mb-8 border-b pb-4">
-                      <h2 className="text-2xl font-black text-slate-800 tracking-tight">故事线存档</h2>
-                      <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-800 text-xl"><i className="fas fa-times"></i></button>
-                   </div>
-                   <div className="flex-1 overflow-y-auto custom-scroll space-y-6">
-                      {state.history.length === 0 ? <div className="text-slate-300 text-center py-20 italic">尚未开启故事...</div> : 
-                        state.history.map((h, i) => (
-                          <div key={i} className="relative pl-6 border-l-2 border-indigo-100">
-                             <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-indigo-500 border-4 border-white shadow-sm"></div>
-                             <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{h.phase} | Week {h.week}</div>
-                             <h4 className="font-black text-slate-800 mt-1">{h.eventTitle}</h4>
-                             <p className="text-xs text-slate-600 mt-1">决策：{h.choiceText}</p>
-                             <div className="mt-2 text-[10px] font-bold text-slate-400 bg-slate-50 p-2 rounded-lg">{h.resultSummary}</div>
+                 </div>
+              </div>
+          )}
+  
+          {/* Weekend Result Modal */}
+          {weekendResult && (
+               <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-40 flex items-center justify-center p-4 animate-fadeIn">
+                   <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-indigo-500">
+                       <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl text-white shadow-lg ${weekendResult.activity.type === 'OI' ? 'bg-indigo-500' : weekendResult.activity.type === 'LOVE' ? 'bg-rose-500' : 'bg-amber-400'}`}>
+                           <i className={`fas ${weekendResult.activity.icon}`}></i>
+                       </div>
+                       <h3 className="text-2xl font-black text-slate-800 mb-2">{weekendResult.activity.name}</h3>
+                       <p className="text-slate-600 mb-6 leading-relaxed text-lg">{weekendResult.resultText}</p>
+                       
+                       {weekendResult.diff.length > 0 && (
+                          <div className="flex flex-wrap justify-center gap-2 mb-8">
+                             {weekendResult.diff.map((d, i) => (
+                               <span key={i} className={`px-3 py-1 rounded-full text-xs font-bold ${d.includes('+') ? 'bg-emerald-50 text-emerald-700' : d.includes('-') ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{d}</span>
+                             ))}
                           </div>
-                        ))}
+                       )}
+  
+                       <button onClick={confirmWeekendActivity} className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-black text-lg hover:bg-indigo-700 shadow-xl transition-all active:scale-95">
+                           确定
+                       </button>
                    </div>
-                </div>
-             </div>
-        )}
-      </main>
-    </div>
-  );
-};
-
-export default App;
+               </div>
+          )}
+  
+          {/* Club Selection Modal */}
+          {showClubSelection && (
+               <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                   <div className="bg-white rounded-3xl p-6 md:p-8 max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+                       <h2 className="text-3xl font-black text-center mb-2">百团大战</h2>
+                       <p className="text-center text-slate-500 mb-6">社团活动将占用你每四周的一个周末行动点。</p>
+                       
+                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto custom-scroll p-2">
+                           {CLUBS.map(club => (
+                               <button key={club.id} onClick={() => handleClubSelect(club.id)}
+                                   className="p-4 rounded-2xl border-2 border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-left flex flex-col gap-2 group active:scale-95"
+                               >
+                                   <div className="flex items-center gap-3">
+                                       <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                                           <i className={`fas ${club.icon}`}></i>
+                                       </div>
+                                       <span className="font-bold text-lg text-slate-800">{club.name}</span>
+                                   </div>
+                                   <p className="text-xs text-slate-500 leading-relaxed">{club.description}</p>
+                                   <div className="mt-auto pt-2 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded w-fit group-hover:bg-white">
+                                       {club.effectDescription}
+                                   </div>
+                               </button>
+                           ))}
+                           <button onClick={() => handleClubSelect('none')} className="p-4 rounded-2xl border-2 border-slate-100 hover:border-slate-400 hover:bg-slate-50 transition-all text-left flex flex-col justify-center items-center gap-2 text-slate-400 active:scale-95">
+                               <span className="font-bold">不参加社团</span>
+                               <span className="text-xs">以此换取更多的自由时间</span>
+                           </button>
+                       </div>
+                   </div>
+               </div>
+          )}
+  
+          {/* Shop Modal */}
+          {showShop && (
+               <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn" onClick={() => setShowShop(false)}>
+                   <div className="bg-white rounded-3xl p-6 md:p-8 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl relative" onClick={e => e.stopPropagation()}>
+                       <div className="flex justify-between items-center mb-6">
+                           <div>
+                              <h2 className="text-2xl font-black text-slate-800">八中小卖部</h2>
+                              <p className="text-sm text-slate-500">持有金钱: <span className="text-yellow-600 font-bold">{state.general.money}</span></p>
+                           </div>
+                           <button onClick={() => setShowShop(false)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center z-[105]"><i className="fas fa-times"></i></button>
+                       </div>
+                       
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-y-auto custom-scroll p-1 mb-4">
+                           {SHOP_ITEMS.map(item => (
+                               <button 
+                                  key={item.id} 
+                                  onClick={() => handleShopPurchase(item)}
+                                  disabled={state.general.money < item.price}
+                                  className="p-4 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-left flex items-center gap-4 group disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+                               >
+                                   <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-white group-hover:text-indigo-600 transition-colors">
+                                       <i className={`fas ${item.icon} text-xl`}></i>
+                                   </div>
+                                   <div className="flex-1">
+                                       <div className="flex justify-between items-center">
+                                           <span className="font-bold text-slate-800">{item.name}</span>
+                                           <span className="text-sm font-bold text-yellow-600">{item.price} G</span>
+                                       </div>
+                                       <p className="text-xs text-slate-400 mt-1">{item.description}</p>
+                                   </div>
+                               </button>
+                           ))}
+                       </div>
+                       
+                       {/* Added Exit Button for Mobile access */}
+                       <button 
+                          onClick={() => setShowShop(false)}
+                          className="w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors mt-auto"
+                       >
+                          离开
+                       </button>
+                   </div>
+               </div>
+          )}
+  
+          {/* Event Modal Overlay */}
+          {state.currentEvent && (
+              <EventModal 
+                  event={state.currentEvent}
+                  state={state}
+                  eventResult={state.eventResult}
+                  onChoice={handleChoice}
+                  onConfirm={handleEventConfirm}
+              />
+          )}
+          
+          {/* Exams / Selection / Endings */}
+          {(state.phase === Phase.SELECTION || state.phase === Phase.SUBJECT_RESELECTION) && (
+              <div className="absolute inset-0 bg-white/95 z-30 p-4 md:p-10 flex flex-col items-center justify-center rounded-2xl">
+                 <h2 className="text-3xl font-black mb-4">高一选科</h2>
+                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-10 w-full max-w-lg">
+                    {(['physics', 'chemistry', 'biology', 'history', 'geography', 'politics'] as SubjectKey[]).map(s => (
+                      <button key={s} onClick={() => setState(prev => ({ ...prev, selectedSubjects: prev.selectedSubjects.includes(s) ? prev.selectedSubjects.filter(x => x !== s) : (prev.selectedSubjects.length < 3 ? [...prev.selectedSubjects, s] : prev.selectedSubjects) }))}
+                        className={`p-4 rounded-2xl border-2 transition-all font-bold ${state.selectedSubjects.includes(s) ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
+                        {SUBJECT_NAMES[s]}
+                      </button>
+                    ))}
+                 </div>
+                 <button disabled={state.selectedSubjects.length !== 3} onClick={() => setState(prev => ({ ...prev, phase: prev.phase === Phase.SELECTION ? Phase.PLACEMENT_EXAM : Phase.SEMESTER_1 }))} className="bg-indigo-600 disabled:bg-slate-200 text-white px-12 py-4 rounded-2xl font-black text-xl shadow-xl">确认选择</button>
+              </div>
+          )}
+          
+          {(state.phase === Phase.PLACEMENT_EXAM || state.phase === Phase.FINAL_EXAM || state.phase === Phase.MIDTERM_EXAM || state.phase === Phase.CSP_EXAM || state.phase === Phase.NOIP_EXAM) && (
+               <div className="absolute inset-0 z-40 rounded-2xl overflow-hidden">
+                   <ExamView 
+                      title={getExamTitle()} 
+                      state={state} 
+                      onFinish={handleExamFinish} 
+                   />
+               </div>
+          )}
+  
+          {/* Final Settlement Overlay - IMPROVED UI */}
+          {(state.phase === Phase.ENDING || state.phase === Phase.WITHDRAWAL) && endingData && (
+              <EndingScreen 
+                  state={state}
+                  endingData={endingData}
+                  onRestart={() => setView('HOME')}
+                  onViewHistory={() => setShowHistory(true)}
+              />
+          )}
+  
+          {state.popupCompetitionResult && (
+               <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn p-4">
+                  <div className="bg-white rounded-[40px] p-8 md:p-12 text-center max-w-lg w-full shadow-2xl relative border-4 border-yellow-400">
+                      <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 bg-yellow-400 rounded-full flex items-center justify-center shadow-lg border-4 border-white"><i className="fas fa-trophy text-white text-4xl"></i></div>
+                      <h3 className="text-2xl md:text-3xl font-black text-slate-800 mt-6 mb-2">{state.popupCompetitionResult.title}</h3>
+                      <div className="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
+                          <div className="text-4xl font-black text-indigo-600 mb-2">{state.popupCompetitionResult.score} pts</div>
+                          <div className="text-2xl font-bold text-yellow-600">{state.popupCompetitionResult.award}</div>
+                      </div>
+                      <button onClick={closeCompetitionPopup} className="bg-indigo-600 text-white px-12 py-4 rounded-2xl font-black text-xl hover:bg-indigo-700 shadow-xl w-full">收入囊中</button>
+                  </div>
+               </div>
+          )}
+  
+          {showAchievements && (
+               <div className="absolute inset-0 z-[60] flex justify-center items-center bg-slate-900/50 backdrop-blur-sm animate-fadeIn p-4" onClick={() => setShowAchievements(false)}>
+                  <div className="bg-white rounded-[40px] p-6 md:p-8 max-w-4xl w-full h-3/4 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+                      <div className="flex justify-between items-center mb-6">
+                           <div>
+                              <h2 className="text-3xl font-black text-slate-800">成就墙</h2>
+                              {state.difficulty !== 'REALITY' && <p className="text-xs text-rose-500 font-bold mt-1">当前难度无法解锁新成就</p>}
+                           </div>
+                           <button onClick={() => setShowAchievements(false)} className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"><i className="fas fa-times"></i></button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto custom-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {Object.values(ACHIEVEMENTS).map(ach => (
+                              <div key={ach.id} className={`p-4 rounded-2xl border flex items-center gap-4 ${state.unlockedAchievements.includes(ach.id) ? 'bg-indigo-50 border-indigo-200' : 'opacity-50 grayscale'}`}>
+                                  <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow flex-shrink-0"><i className={`fas ${ach.icon} text-indigo-500`}></i></div>
+                                  <div><h4 className="font-bold text-sm md:text-base">{ach.title}</h4><p className="text-[10px] md:text-xs text-slate-500">{ach.description}</p></div>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+               </div>
+          )}
+  
+          {showHistory && (
+               <div className="absolute inset-0 z-[60] flex justify-end bg-slate-900/40 backdrop-blur-sm animate-fadeIn" onClick={() => setShowHistory(false)}>
+                  <div className="w-full md:w-96 bg-white h-full shadow-2xl p-6 md:p-8 flex flex-col animate-slideInRight" onClick={e => e.stopPropagation()}>
+                     <div className="flex justify-between items-center mb-8 border-b pb-4">
+                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">故事线存档</h2>
+                        <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-800 text-xl"><i className="fas fa-times"></i></button>
+                     </div>
+                     <div className="flex-1 overflow-y-auto custom-scroll space-y-6">
+                        {state.history.length === 0 ? <div className="text-slate-300 text-center py-20 italic">尚未开启故事...</div> : 
+                          state.history.map((h, i) => (
+                            <div key={i} className="relative pl-6 border-l-2 border-indigo-100">
+                               <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-indigo-500 border-4 border-white shadow-sm"></div>
+                               <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{h.phase} | Week {h.week}</div>
+                               <h4 className="font-black text-slate-800 mt-1">{h.eventTitle}</h4>
+                               <p className="text-xs text-slate-600 mt-1">决策：{h.choiceText}</p>
+                               <div className="mt-2 text-[10px] font-bold text-slate-400 bg-slate-50 p-2 rounded-lg">{h.resultSummary}</div>
+                            </div>
+                          ))}
+                     </div>
+                  </div>
+               </div>
+          )}
+        </main>
+      </div>
+    );
+  };
+  
+  export default App;

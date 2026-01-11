@@ -1,3 +1,4 @@
+
 import { GameState, GameEvent, SubjectKey, SUBJECT_NAMES, Phase } from '../types';
 import { modifySub, modifyOI } from './utils';
 import { STATUSES } from './mechanics'; 
@@ -9,8 +10,13 @@ import { STATUSES } from './mechanics';
 // --- Helper to Generate Dynamic Events ---
 
 export const generateStudyEvent = (state: GameState): GameEvent => {
-    // Pick a random subject from selected or main subjects
-    const pool: SubjectKey[] = ['chinese', 'math', 'english', ...state.selectedSubjects];
+    // Pick a random subject from selected or main subjects.
+    // If no subjects selected yet (early game), allow potential for any subject or just mains.
+    // To fix "some classes cannot be attended", we ensure the pool covers relevant ground.
+    const pool: SubjectKey[] = state.selectedSubjects.length > 0 
+        ? ['chinese', 'math', 'english', ...state.selectedSubjects]
+        : (Object.keys(SUBJECT_NAMES) as SubjectKey[]); // In early game, allow exposure to all
+
     const subject = pool[Math.floor(Math.random() * pool.length)];
     const subName = SUBJECT_NAMES[subject];
 
@@ -688,7 +694,7 @@ export const PHASE_EVENTS: Record<Phase, GameEvent[]> = {
             id: 'evt_betrayal',
             title: '背叛',
             description: '你发现TA最近总是躲着你回消息，直到你看到了不该看到的一幕。',
-            condition: (s) => !!s.romancePartner && s.general.romance < 35,
+            condition: (s) => !!s.romancePartner,
             triggerType: 'RANDOM',
             once: true,
             type: 'negative',

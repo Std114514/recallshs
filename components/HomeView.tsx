@@ -13,6 +13,7 @@ interface HomeViewProps {
 
 const HomeView: React.FC<HomeViewProps> = ({ selectedDifficulty, onDifficultyChange, customStats, onCustomStatsChange, onStart }) => {
     const [showChangelog, setShowChangelog] = React.useState(false);
+    const [showSponsor, setShowSponsor] = React.useState(false);
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 md:p-10 font-sans relative overflow-hidden">
@@ -97,6 +98,9 @@ const HomeView: React.FC<HomeViewProps> = ({ selectedDifficulty, onDifficultyCha
                     <button onClick={() => setShowChangelog(true)} className="bg-white text-slate-500 px-6 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-slate-50 transition-all flex items-center gap-2">
                         <i className="fas fa-history"></i> <span className="hidden md:inline">更新日志</span>
                     </button>
+                    <button onClick={() => setShowSponsor(true)} className="bg-white text-amber-500 px-6 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-slate-50 transition-all flex items-center gap-2">
+                        <i className="fas fa-heart"></i> <span className="hidden md:inline">赞助</span>
+                    </button>
                     <button onClick={onStart} className="bg-indigo-600 hover:bg-indigo-700 text-white px-10 py-4 rounded-2xl font-black text-xl shadow-xl transition-all hover:scale-105 flex items-center gap-3">
                         <i className="fas fa-play"></i> 开启模拟
                     </button>
@@ -129,6 +133,40 @@ const HomeView: React.FC<HomeViewProps> = ({ selectedDifficulty, onDifficultyCha
                      </div>
                  </div>
              )}
+
+             {/* Sponsor Modal */}
+             {showSponsor && (
+                 <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn" onClick={() => setShowSponsor(false)}>
+                     <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+                         <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                             <h2 className="text-2xl font-black text-slate-800">赞助商展示</h2>
+                             <button onClick={() => setShowSponsor(false)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"><i className="fas fa-times"></i></button>
+                         </div>
+                         <div className="overflow-y-auto custom-scroll space-y-6 pr-2 text-center">
+                             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 mb-4">
+                                <div className="w-16 h-16 bg-slate-200 rounded-full mx-auto mb-2 flex items-center justify-center text-2xl text-slate-400"><i className="fas fa-user-circle"></i></div>
+                                <div className="font-bold text-slate-400">广告位招租！这真的对我很重要喵！</div>
+                             </div>
+                             <p className="text-xs text-slate-400 mb-6">金主列表每周更新一次，可能有时间延迟</p>
+                             <a href="https://afdian.com/a/liuenyin?tab=home" target="_blank" rel="noopener noreferrer" className="block w-full bg-amber-500 text-white py-3 rounded-xl font-bold hover:bg-amber-600 transition-colors">
+                                 <i className="fas fa-bolt mr-2"></i> 前往爱发电支持作者
+                             </a>
+                         </div>
+                     </div>
+                 </div>
+             )}
+
+             {/* Footer with Links */}
+            <div className="absolute bottom-4 left-0 w-full flex justify-center items-center gap-6 text-slate-400 z-10 pointer-events-auto">
+                <div className="flex items-center gap-2 text-xs">
+                    <i className="fas fa-eye"></i>
+                    <span>访问量:</span>
+                    <img src="https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Fliuenyin%2Frecallbj8z&label=VIEWS&countColor=%236366f1" alt="views" className="h-4" />
+                </div>
+                <a href="https://github.com/liuenyin/recallbj8z" target="_blank" rel="noopener noreferrer" className="text-xs font-bold hover:text-indigo-600 transition-colors flex items-center gap-1">
+                    <i className="fab fa-github"></i> GitHub 仓库
+                </a>
+            </div>
         </div>
     );
 };

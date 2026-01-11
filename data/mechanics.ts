@@ -37,12 +37,12 @@ export const TALENTS: Talent[] = [
         effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 20 } })
     },
     { id: 'poor_student', name: '寒门学子', description: '初始金钱-50，但意志坚定（心态+10，效率+2）。', rarity: 'common', cost: 1,
-        effect: (s) => ({ general: { ...s.general, money: Math.max(0, s.general.money - 50), mindset: s.general.mindset + 10, efficiency: s.general.efficiency + 2 } })
+        effect: (s) => ({ general: { ...s.general, money: s.general.money - 50, mindset: s.general.mindset + 10, efficiency: s.general.efficiency + 2 } })
     },
 
     // --- Cursed (Negative Cost = Gives Points) ---
     { id: 'poverty', name: '家徒四壁', description: '初始金钱归零，且背负100元债务。', rarity: 'cursed', cost: -2,
-      effect: (s) => ({ general: { ...s.general, money: -100 } })
+      effect: (s) => ({ general: { ...s.general, money: s.general.money - 120 } }) // Assuming base is ~20, this sets to -100 relative
     },
     { id: 'frail', name: '体弱多病', description: '初始健康降低，稍不注意就会生病。', rarity: 'cursed', cost: -2,
       effect: (s) => ({ general: { ...s.general, health: 20 } })
@@ -62,19 +62,21 @@ export const TALENTS: Talent[] = [
 export const SHOP_ITEMS: Item[] = [
     { id: 'red_bull', name: '红牛', description: '精力充沛！效率+2，健康-1。', price: 15, icon: 'fa-bolt', 
       effect: (s) => ({ general: { ...s.general, efficiency: s.general.efficiency + 2, health: s.general.health - 1, money: s.general.money - 15 } }) },
-    { id: 'coffee', name: '瑞幸冰美式', description: '提神醒脑。心态+3，效率+1。', price: 20, icon: 'fa-coffee',
+    { id: 'coffee', name: '瑞幸生椰拿铁', description: '我咖啡怎么变了？心态+3，效率+1。', price: 20, icon: 'fa-coffee',
       effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 3, efficiency: s.general.efficiency + 1, money: s.general.money - 20 } }) },
-    { id: 'five_three', name: '五年高考三年模拟', description: '刷题神器。全科水平+2，心态-3。', price: 45, icon: 'fa-book',
+    { id: 'five_three', name: '五年高考三年模拟', description: '请输入文本。全科水平+2，心态-3。', price: 45, icon: 'fa-book',
       effect: (s) => ({ 
           subjects: modifySub(s, ['chinese', 'math', 'english', 'physics', 'chemistry', 'biology'], 2), 
           general: { ...s.general, mindset: s.general.mindset - 3, money: s.general.money - 45 } 
       }) },
-    { id: 'game_skin', name: '游戏皮肤', description: '虽然不能变强，但心情变好了。心态+8。', price: 68, icon: 'fa-gamepad',
+    { id: 'game_skin', name: '不要问为啥没有648，问就是放这里你买不了', description: '虽然不能变强，但心情变好了。心态+8。', price: 68, icon: 'fa-gamepad',
       effect: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 8, money: s.general.money - 68 } }) },
     { id: 'flowers', name: '鲜花', description: '送给心仪的人。魅力+5，若有对象则大幅提升关系。', price: 50, icon: 'fa-fan',
       effect: (s) => ({ general: { ...s.general, romance: s.general.romance + 5, money: s.general.money - 50, mindset: s.general.mindset + (s.romancePartner ? 5 : 0) } }) },
     { id: 'algo_book', name: '算法导论', description: '厚得可以当枕头。OI能力全面+2。', price: 80, icon: 'fa-code',
       effect: (s) => ({ oiStats: modifyOI(s, { dp: 2, ds: 2, math: 2, graph: 2, string: 2, misc: 2 }), general: { ...s.general, money: s.general.money - 80 } }) },
+    { id: 'luogu_book', name: '深入浅出程序设计竞赛', description: 'kkk亲签？', price: 56, icon: 'fa-code',
+      effect: (s) => ({ oiStats: modifyOI(s, { dp: 1, ds: 2, math: 2, graph: 1, string: 1, misc: 1 }), general: { ...s.general, money: s.general.money - 56 } }) },
     { id: 'gym_card', name: '健身卡', description: '强身健体。健康+15。', price: 100, icon: 'fa-dumbbell',
       effect: (s) => ({ general: { ...s.general, health: s.general.health + 15, money: s.general.money - 100 } }) }
 ];
@@ -88,7 +90,7 @@ export const ACHIEVEMENTS: Record<string, Achievement> = {
     'survival': { id: 'survival', title: '极限生存', description: '在健康低于10的情况下完成一个学期。', icon: 'fa-notes-medical', rarity: 'rare' },
     'rich': { id: 'rich', title: '小金库', description: '持有金钱超过200。', icon: 'fa-coins', rarity: 'common' },
     'in_debt': { id: 'in_debt', title: '负债累累', description: '负债超过250。', icon: 'fa-file-invoice-dollar', rarity: 'common' },
-    'top_rank': { id: 'top_rank', title: '一览众山小', description: '年级第一！（注：不确定该版本能否实现）', icon: 'fa-crown', rarity: 'legendary' },
+    'top_rank': { id: 'top_rank', title: '一览众山小', description: '年级第一！（真的能实现！LA群里有人成功了！）', icon: 'fa-crown', rarity: 'legendary' },
     'bottom_rank': { id: 'bottom_rank', title: '旷世奇才', description: '倒数第一，也是神人。', icon: 'fa-poop', rarity: 'rare' },
     'sleep_god': { id: 'sleep_god', title: '睡神', description: '天天睡觉还考这么高，羡慕了。', icon: 'fa-bed', rarity: 'legendary' },
 };
@@ -115,6 +117,18 @@ export const CLUBS: Club[] = [
         action: (s) => ({ general: { ...s.general, health: s.general.health + 3, romance: s.general.romance + 3, mindset: s.general.mindset + 2 } })
     },
     {
+        id: 'volleyball', name: '排球社', icon: 'fa-volleyball-ball', description: '我实在编不出来词了', effectDescription: '健康++, 魅力+, 心态+',
+        action: (s) => ({ general: { ...s.general, health: s.general.health + 3, romance: s.general.romance + 2, mindset: s.general.mindset + 2 } })
+    },
+    {
+        id: 'vocaloid', name: '天籁V家', icon: 'fa-music', description: 'Miku！', effectDescription: '魅力++, 心态+, 经验+',
+        action: (s) => ({ general: { ...s.general, romance: s.general.romance + 3, mindset: s.general.mindset + 2, experience: s.general.experience + 1 } })
+    },
+    {
+        id: 'poetry', name: '一方诗社', icon: 'fa-pen-nib', description: '诗意栖居，文采飞扬。', effectDescription: '语文++, 心态+, 历史+',
+        action: (s) => ({ subjects: modifySub(s, ['chinese', 'history'], 2), general: { ...s.general, mindset: s.general.mindset + 2 } })
+    },
+    {
         id: 'social_science', name: '社会科学研学社', icon: 'fa-globe', description: '研究社会问题，关注人类命运。', effectDescription: '政治++, 历史++, 经验+',
         action: (s) => ({ subjects: modifySub(s, ['politics', 'history'], 2), general: { ...s.general, experience: s.general.experience + 2 } })
     },
@@ -127,15 +141,15 @@ export const CLUBS: Club[] = [
         action: (s) => ({ general: { ...s.general, mindset: s.general.mindset + 4, luck: s.general.luck + 1 } })
     },
     {
-        id: 'astronomy', name: '南斗天文社', icon: 'fa-star', description: '仰望星空，脚踏实地。', effectDescription: '物理++, 地理+, 心态+',
+        id: 'astronomy', name: '南斗天文社', icon: 'fa-star', description: 'whd:欢迎加入【数据删除】！', effectDescription: '物理++, 地理+, 心态+',
         action: (s) => ({ subjects: modifySub(s, ['physics', 'geography'], 2), general: { ...s.general, mindset: s.general.mindset + 2 } })
     },
     {
-        id: 'math_research', name: '大数研究社', icon: 'fa-calculator', description: '探索数学的奥秘。', effectDescription: '数学+++, 逻辑+',
+        id: 'math_research', name: '大数研究社', icon: 'fa-calculator', description: 'G(64)?', effectDescription: '数学+++, 逻辑+',
         action: (s) => ({ subjects: modifySub(s, ['math'], 4) })
     },
     {
-        id: 'ttrpg', name: '跑团社', icon: 'fa-dice-d20', description: '在龙与地下城的世界里冒险。', effectDescription: '运气++, 心态++, 经验+',
+        id: 'ttrpg', name: '跑团社', icon: 'fa-dice-d20', description: '虽然但是，我们真的约跑欸（？', effectDescription: '运气++, 心态++, 经验+',
         action: (s) => ({ general: { ...s.general, luck: s.general.luck + 3, mindset: s.general.mindset + 3, experience: s.general.experience + 1 } })
     },
     {

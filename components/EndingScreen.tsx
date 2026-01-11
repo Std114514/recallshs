@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { GameState, Phase } from '../types';
+import { DIFFICULTY_PRESETS } from '../data/constants';
 
 interface EndingScreenProps {
     state: GameState;
@@ -33,6 +34,12 @@ const EndingScreen: React.FC<EndingScreenProps> = ({ state, endingData, onRestar
                                  <div className="text-sm font-bold text-indigo-600 mt-1">{state.className}</div>
                              </div>
                          </div>
+
+                         {state.difficulty && (
+                             <div className="mb-6 inline-block px-3 py-1 rounded bg-slate-200 text-slate-600 text-xs font-bold">
+                                 难度: {DIFFICULTY_PRESETS[state.difficulty]?.label || '自定义'}
+                             </div>
+                         )}
                          
                          <p className="text-slate-600 italic mb-8 border-l-4 border-indigo-200 pl-4 py-1">
                              "{endingData.comment}"
@@ -49,7 +56,9 @@ const EndingScreen: React.FC<EndingScreenProps> = ({ state, endingData, onRestar
                                  <div className="w-px bg-slate-200"></div>
                                  <div className="flex-1">
                                      <div className="text-xs text-slate-500 mb-1">期末考试</div>
-                                     <div className="text-xl font-black text-indigo-600">{state.examResult?.rank ? `Top ${state.examResult.rank}` : 'N/A'}</div>
+                                     <div className="text-xl font-black text-indigo-600">
+                                         {state.examResult?.title === '期末考试' && state.examResult.rank ? `Top ${state.examResult.rank}` : 'N/A'}
+                                     </div>
                                  </div>
                              </div>
                          </div>

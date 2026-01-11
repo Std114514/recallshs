@@ -81,7 +81,7 @@ export interface GameStatus {
   effectDescription?: string; // e.g. "学习效率 +20%"
 }
 
-export type ClubId = 'rap' | 'dance' | 'social_science' | 'mun' | 'touhou' | 'astronomy' | 'math_research' | 'ttrpg' | 'literature' | 'otaku' | 'anime' | 'none';
+export type ClubId = 'rap' | 'dance' | 'social_science' | 'mun' | 'touhou' | 'astronomy' | 'math_research' | 'ttrpg' | 'literature' | 'otaku' | 'anime' | 'volleyball' | 'vocaloid' | 'poetry' | 'none';
 
 export interface Club {
     id: ClubId;
